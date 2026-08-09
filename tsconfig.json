@@ -1,0 +1,51 @@
+{
+    "compilerOptions": {
+        //Version Info
+        // MCP SDK exposes subpath exports only ("@modelcontextprotocol/sdk/server/mcp.js"),
+        // which node10 resolution cannot resolve — tsup(esbuild) bundles, so "Bundler" fits.
+        "moduleResolution": "Bundler",
+        "baseUrl": "./src/",
+        "paths": {
+            "@/*":   [ "./*" ],
+        },
+        "sourceMap": true,
+        "strict": true,
+        "allowJs": true,
+        "checkJs": true,
+        "incremental": false,
+        "esModuleInterop": false,
+        "resolveJsonModule": false,
+        "allowSyntheticDefaultImports": true,
+        "forceConsistentCasingInFileNames": false,
+        "useDefineForClassFields": false,
+        // 클래스 프로퍼티 초기화 시 'undefined'로 초기화 하지 않게 설정
+        "noImplicitAny": false,
+        // any타입 사용시 경고 해제
+        //"noImplicitThis": false,
+        // 'any' 타입으로 구현된 'this' 표현식 에러처리 여부
+        "strictNullChecks": true,
+        // zod 4 / MCP SDK 타입 추론이 strictNullChecks 전제 — 형제 패키지들과 달리 켜둠
+        "strictFunctionTypes": true,
+        // 함수 타입에 대한 엄격한 확인 여부
+        //"strictBindCallApply": false,
+        // 함수에 엄격한 'bind', 'call' 그리고 'apply' 메소드 사용 여부
+        //"strictPropertyInitialization": false,
+        // 클래스의 값 초기화에 엄격한 확인 여부
+        //"noFallthroughCasesInSwitch": false,
+        "experimentalDecorators": true,
+
+        "outDir": "./lib",
+        "target": "ES2022",
+        "module": "ESNext",
+        "lib": [ "ES2022", "DOM" ],
+        "skipLibCheck": true,
+        "declaration": true,
+        "declarationMap": true,
+
+    },
+    "include": [ "src" ],
+    "exclude": [ "node_modules", "lib" ],
+    "tsc-alias": {
+        "resolveFullPaths": true,
+    }
+}

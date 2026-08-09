@@ -1,0 +1,13 @@
+.git
+.gitignore
+.vscode
+.claude/
+.github/
+.env*
+!.env.example
+node_modules/
+tsconfig*.json
+[Ss]rc/
+[Tt]ests/
+[Cc]overage/
+[Ll]ogs/

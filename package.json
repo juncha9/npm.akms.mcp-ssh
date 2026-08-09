@@ -1,0 +1,61 @@
+{
+    "name": "@akms/mcp-ssh",
+    "version": "0.0.2",
+    "description": "MCP server that lets an AI agent run shell commands and transfer files on one pre-registered SSH host, with every command and path screened by a guard policy.",
+    "keywords": [],
+    "license": "MIT",
+    "type": "module",
+    "main": "./lib/index.cjs",
+    "module": "./lib/index.js",
+    "types": "./lib/index.d.ts",
+    "bin": {
+        "akms-mcp-ssh": "lib/cli.js"
+    },
+    "exports": {
+        ".": {
+            "import": {
+                "types": "./lib/index.d.ts",
+                "default": "./lib/index.js"
+            },
+            "require": {
+                "types": "./lib/index.d.cts",
+                "default": "./lib/index.cjs"
+            }
+        }
+    },
+    "files": [
+        "lib",
+        "README.md",
+        "LICENSE.md"
+    ],
+    "engines": {
+        "node": ">=18"
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "scripts": {
+        "build": "tsc --noEmit && rimraf ./lib && tsup",
+        "watch": "tsc --noEmit && tsup --watch",
+        "dev": "tsx ./src/cli.ts",
+        "start": "node ./lib/cli.js",
+        "test": "vitest run",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.30.0",
+        "ssh2": "^1.17.0",
+        "zod": "^4.4.3"
+    },
+    "devDependencies": {
+        "@types/node": "^22.15.3",
+        "@types/ssh2": "^1.15.5",
+        "@vitest/coverage-v8": "^4.1.4",
+        "rimraf": "^6.0.1",
+        "tsup": "^8.5.1",
+        "tsx": "^4.20.6",
+        "typescript": "^5.8.3",
+        "vitest": "^4.1.4"
+    }
+}
