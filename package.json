@@ -1,9 +1,17 @@
 {
     "name": "@akms/mcp-ssh",
-    "version": "0.0.2",
+    "version": "0.0.3",
     "description": "MCP server that lets an AI agent run shell commands and transfer files on one pre-registered SSH host, with every command and path screened by a guard policy.",
     "keywords": [],
     "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/alkemic-studio/npm.akms.mcp-ssh.git"
+    },
+    "homepage": "https://github.com/alkemic-studio/npm.akms.mcp-ssh#readme",
+    "bugs": {
+        "url": "https://github.com/alkemic-studio/npm.akms.mcp-ssh/issues"
+    },
     "type": "module",
     "main": "./lib/index.cjs",
     "module": "./lib/index.js",

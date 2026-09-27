@@ -2,6 +2,11 @@
 
 All notable changes to `@akms/mcp-ssh`. Dates are `YYYY-MM-DD`.
 
+## 0.0.3 — 2026-09-28
+
+- `package.json` declares `repository`, `homepage` and `bugs` pointing at
+  `github.com/alkemic-studio/npm.akms.mcp-ssh`.
+
 ## 0.0.2 — 2026-08-09
 
 First release to reach the registry. `0.0.1` was built but never published, so the

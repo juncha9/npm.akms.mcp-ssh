@@ -28,4 +28,4 @@ export const MAX_DIRECTORY_ENTRIES = 1_000;
 
 export const SERVER_NAME = "akms-mcp-ssh";
 
-export const SERVER_VERSION = "0.0.2";
+export const SERVER_VERSION = "0.0.3";
