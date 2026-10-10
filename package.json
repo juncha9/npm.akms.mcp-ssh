@@ -52,7 +52,6 @@
         "test:coverage": "vitest run --coverage"
     },
     "dependencies": {
-        "@akms/mcp-ssh": "^0.1.0",
         "@modelcontextprotocol/sdk": "^1.30.0",
         "ssh2": "^1.17.0",
         "zod": "^4.4.3"
