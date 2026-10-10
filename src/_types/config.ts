@@ -26,6 +26,19 @@ export interface SshPolicy {
     allowedPaths: string[];
 }
 
+/** Intermediate host the target is reached through, as OpenSSH's `ProxyJump` / `-J`. */
+export interface SshJumpProfile {
+    host: string;
+    port: number;
+    username: string;
+    /** Expanded absolute path to a private key file. */
+    privateKeyPath?: string;
+    passphrase?: string;
+    password?: string;
+    /** Expected jump host key, `SHA256:…`; a mismatch aborts the connection. */
+    hostKeyFingerprint?: string;
+}
+
 /** The registered host: where to connect, how to authenticate, what is permitted. */
 export interface SshHostProfile {
     /** Alias shown to the model, from `SSH_NAME`; defaults to the hostname. */
@@ -45,6 +58,14 @@ export interface SshHostProfile {
     hostKeyFingerprint?: string;
     /** Directory every session starts in; falls back to the login shell's default. */
     defaultCwd?: string;
+    /**
+     * Command whose stdin/stdout carry the SSH stream instead of a TCP socket — OpenSSH's
+     * `ProxyCommand`. It carries the first hop: the jump host when one is set, else the
+     * target. `%h` / `%p` / `%r` expand to that hop's host, port and user.
+     */
+    proxyCommand?: string;
+    /** Jump host the target is reached through via a forwarded TCP channel. */
+    jump?: SshJumpProfile;
     policy: SshPolicy;
 }
 
@@ -56,6 +77,13 @@ export interface SshHostSummary {
     username: string;
     description?: string;
     authMethod: "privateKey" | "password" | "agent";
+    /** True when a proxy command carries the first hop; the command itself is withheld. */
+    viaProxyCommand: boolean;
+    jump?: {
+        host: string;
+        port: number;
+        username: string;
+    };
     readonly: boolean;
     allowSudo: boolean;
     allowedPaths: string[];

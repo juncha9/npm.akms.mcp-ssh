@@ -5,6 +5,7 @@ export { truncateOutput, quoteShellArgument, formatBytes } from "./text";
 export type { TruncatedText } from "./text";
 
 export {
+    findExecutable,
     expandHomePath,
     isAbsoluteRemotePath,
     normalizeRemotePath,

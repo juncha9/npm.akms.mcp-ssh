@@ -21,6 +21,22 @@ export const SINGLE_HOST_ENV = {
     DESCRIPTION: "SSH_DESCRIPTION",
     /** Directory new sessions start in. */
     CWD: "SSH_CWD",
+    /**
+     * Command whose stdin/stdout carry the SSH stream, like OpenSSH's `ProxyCommand`.
+     * `%h` / `%p` / `%r` expand to the first hop's host, port and user.
+     */
+    PROXY_COMMAND: "SSH_PROXY_COMMAND",
+    /** Presence of this variable routes the connection through a jump host. */
+    JUMP_HOST: "SSH_JUMP_HOST",
+    JUMP_PORT: "SSH_JUMP_PORT",
+    /** Defaults to `SSH_USER`. */
+    JUMP_USER: "SSH_JUMP_USER",
+    /** Path to the jump host's private key file; defaults to `SSH_KEY`. */
+    JUMP_KEY: "SSH_JUMP_KEY",
+    JUMP_PASSPHRASE: "SSH_JUMP_PASSPHRASE",
+    JUMP_PASSWORD: "SSH_JUMP_PASSWORD",
+    /** Pinned jump host key, `SHA256:…`. */
+    JUMP_HOST_KEY: "SSH_JUMP_HOST_KEY",
     READONLY: "SSH_READONLY",
     ALLOW_SUDO: "SSH_ALLOW_SUDO",
     /** Comma-separated binary names. */

@@ -58,6 +58,17 @@ export function formatHostProfile(profile: SshHostProfile | null): string {
         lines.push(`    ${summary.description}`);
     }
 
+    const routeParts: string[] = [];
+    if (summary.viaProxyCommand == true) {
+        routeParts.push("proxy command");
+    }
+    if (summary.jump != null) {
+        routeParts.push(`jump host ${summary.jump.username}@${summary.jump.host}:${summary.jump.port}`);
+    }
+    if (routeParts.length > 0) {
+        lines.push(`    via ${routeParts.join(" → ")}`);
+    }
+
     if (summary.allowedPaths.length > 0) {
         // Scope stated explicitly: allowedPaths binds the SFTP tools only, and reading
         // it as a filesystem-wide restriction would be a dangerous misunderstanding —

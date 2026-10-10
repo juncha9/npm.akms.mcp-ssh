@@ -14,8 +14,8 @@ import { $logger, expandHomePath } from "@/_libs";
 import type { SshHostProfile, SshHostSummary, SshPolicy } from "@/_types";
 
 /** Trimmed value, or undefined when the variable is unset or blank. */
-function readEnv(name: string): string | undefined {
-    const value = process.env[name];
+function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+    const value = env[name];
     if (value == null) {
         return undefined;
     }
@@ -32,8 +32,8 @@ function readEnv(name: string): string | undefined {
  * @throws {Error} If the value is set but is neither a truthy nor a falsy spelling —
  *                 `SSH_READONLY=ture` must fail loudly, not resolve to "not read-only".
  */
-function readBooleanEnv(name: string): boolean | undefined {
-    const value = readEnv(name);
+function readBooleanEnv(env: NodeJS.ProcessEnv, name: string): boolean | undefined {
+    const value = readEnv(env, name);
     if (value == null) {
         return undefined;
     }
@@ -53,8 +53,8 @@ function readBooleanEnv(name: string): boolean | undefined {
 /**
  * @throws {Error} If the value is set but is not a positive integer.
  */
-function readIntegerEnv(name: string): number | undefined {
-    const value = readEnv(name);
+function readIntegerEnv(env: NodeJS.ProcessEnv, name: string): number | undefined {
+    const value = readEnv(env, name);
     if (value == null) {
         return undefined;
     }
@@ -68,8 +68,8 @@ function readIntegerEnv(name: string): number | undefined {
 }
 
 /** Comma-separated list, blanks dropped. */
-function readListEnv(name: string): string[] | undefined {
-    const value = readEnv(name);
+function readListEnv(env: NodeJS.ProcessEnv, name: string): string[] | undefined {
+    const value = readEnv(env, name);
     if (value == null) {
         return undefined;
     }
@@ -123,13 +123,17 @@ function compileDenyPatterns(sources: string[]): RegExp[] {
  *  2) Resolve the policy over the built-in permissive stance; each variable is opt-in restriction
  *  3) Assemble the connection fields
  *  4) Expand the private key path and check it exists
+ *  5) Route: proxy command and / or jump host
  *
- * @throws {Error} If `SSH_HOST` is set without `SSH_USER`, or a typed value is malformed.
+ * @param env - Where the `SSH_*` variables are read from. Defaults to the process
+ *              environment; the `config` command passes the entry it is about to write.
+ * @throws {Error} If `SSH_HOST` is set without `SSH_USER`, a `SSH_JUMP_*` variable is set
+ *                 without `SSH_JUMP_HOST`, or a typed value is malformed.
  */
-export function loadHostProfile(): SshHostProfile | null {
+export function loadHostProfile(env: NodeJS.ProcessEnv = process.env): SshHostProfile | null {
     // (1) Guard — a missing host is not an error: the server reports "not configured"
     // through the tools, which is a far clearer signal to the model than a dead server.
-    const host = readEnv(SINGLE_HOST_ENV.HOST);
+    const host = readEnv(env, SINGLE_HOST_ENV.HOST);
     if (host == null) {
         const _startupLogger = $logger.child({ context: "loadHostProfile" });
         _startupLogger.warn("no host is registered; set the connection variables and restart", {
@@ -138,18 +142,18 @@ export function loadHostProfile(): SshHostProfile | null {
         return null;
     }
 
-    const username = readEnv(SINGLE_HOST_ENV.USER);
+    const username = readEnv(env, SINGLE_HOST_ENV.USER);
     if (username == null) {
         throw new Error(`${SINGLE_HOST_ENV.HOST} is set, so ${SINGLE_HOST_ENV.USER} is required`);
     }
 
-    const name = readEnv(SINGLE_HOST_ENV.NAME) ?? host;
+    const name = readEnv(env, SINGLE_HOST_ENV.NAME) ?? host;
     const _logger = $logger.child({ context: "loadHostProfile", profile: name });
 
     // (2) Policy — the built-in stance is permissive: an unconfigured host allows
     // everything except the catastrophe rules, because a guard nobody can work through
     // gets turned off wholesale rather than tuned.
-    const allowCommands = readListEnv(SINGLE_HOST_ENV.ALLOW_COMMANDS) ?? [];
+    const allowCommands = readListEnv(env, SINGLE_HOST_ENV.ALLOW_COMMANDS) ?? [];
 
     // `ssh_connect` probes with `pwd` to settle the session's starting directory; without
     // this an allow-list profile could never open a session at all.
@@ -158,34 +162,34 @@ export function loadHostProfile(): SshHostProfile | null {
     }
 
     const policy: SshPolicy = {
-        readonly: readBooleanEnv(SINGLE_HOST_ENV.READONLY) ?? false,
-        allowSudo: readBooleanEnv(SINGLE_HOST_ENV.ALLOW_SUDO) ?? true,
-        execTimeoutMs: readIntegerEnv(SINGLE_HOST_ENV.EXEC_TIMEOUT_MS) ?? DEFAULT_EXEC_TIMEOUT_MS,
-        connectTimeoutMs: readIntegerEnv(SINGLE_HOST_ENV.CONNECT_TIMEOUT_MS) ?? DEFAULT_CONNECT_TIMEOUT_MS,
-        maxOutputCharacters: readIntegerEnv(SINGLE_HOST_ENV.MAX_OUTPUT_CHARACTERS) ?? DEFAULT_MAX_OUTPUT_CHARACTERS,
-        maxReadFileBytes: readIntegerEnv(SINGLE_HOST_ENV.MAX_READ_FILE_BYTES) ?? DEFAULT_MAX_READ_FILE_BYTES,
+        readonly: readBooleanEnv(env, SINGLE_HOST_ENV.READONLY) ?? false,
+        allowSudo: readBooleanEnv(env, SINGLE_HOST_ENV.ALLOW_SUDO) ?? true,
+        execTimeoutMs: readIntegerEnv(env, SINGLE_HOST_ENV.EXEC_TIMEOUT_MS) ?? DEFAULT_EXEC_TIMEOUT_MS,
+        connectTimeoutMs: readIntegerEnv(env, SINGLE_HOST_ENV.CONNECT_TIMEOUT_MS) ?? DEFAULT_CONNECT_TIMEOUT_MS,
+        maxOutputCharacters: readIntegerEnv(env, SINGLE_HOST_ENV.MAX_OUTPUT_CHARACTERS) ?? DEFAULT_MAX_OUTPUT_CHARACTERS,
+        maxReadFileBytes: readIntegerEnv(env, SINGLE_HOST_ENV.MAX_READ_FILE_BYTES) ?? DEFAULT_MAX_READ_FILE_BYTES,
         allowCommands: allowCommands,
-        denyPatterns: compileDenyPatterns(readListEnv(SINGLE_HOST_ENV.DENY_PATTERNS) ?? []),
-        allowedPaths: readListEnv(SINGLE_HOST_ENV.ALLOWED_PATHS) ?? [],
+        denyPatterns: compileDenyPatterns(readListEnv(env, SINGLE_HOST_ENV.DENY_PATTERNS) ?? []),
+        allowedPaths: readListEnv(env, SINGLE_HOST_ENV.ALLOWED_PATHS) ?? [],
     };
 
     // (3) Connection
     const profile: SshHostProfile = {
         name: name,
         host: host,
-        port: readIntegerEnv(SINGLE_HOST_ENV.PORT) ?? DEFAULT_SSH_PORT,
+        port: readIntegerEnv(env, SINGLE_HOST_ENV.PORT) ?? DEFAULT_SSH_PORT,
         username: username,
-        description: readEnv(SINGLE_HOST_ENV.DESCRIPTION),
-        passphrase: readEnv(SINGLE_HOST_ENV.PASSPHRASE),
-        password: readEnv(SINGLE_HOST_ENV.PASSWORD),
-        hostKeyFingerprint: readEnv(SINGLE_HOST_ENV.HOST_KEY),
-        defaultCwd: readEnv(SINGLE_HOST_ENV.CWD),
+        description: readEnv(env, SINGLE_HOST_ENV.DESCRIPTION),
+        passphrase: readEnv(env, SINGLE_HOST_ENV.PASSPHRASE),
+        password: readEnv(env, SINGLE_HOST_ENV.PASSWORD),
+        hostKeyFingerprint: readEnv(env, SINGLE_HOST_ENV.HOST_KEY),
+        defaultCwd: readEnv(env, SINGLE_HOST_ENV.CWD),
         policy: policy,
     };
 
     // (4) Key path — checked at load, not at first use: a typo would otherwise surface as
     // a connection failure minutes later, with the path withheld from the message.
-    const keyPath = readEnv(SINGLE_HOST_ENV.KEY);
+    const keyPath = readEnv(env, SINGLE_HOST_ENV.KEY);
     if (keyPath != null) {
         const expandedKeyPath = expandHomePath(keyPath);
         profile.privateKeyPath = expandedKeyPath;
@@ -197,11 +201,62 @@ export function loadHostProfile(): SshHostProfile | null {
         }
     }
 
+    // (5) Route — the proxy command carries the first hop (the jump host when both are
+    // set), as an OpenSSH `ProxyCommand` on the jump host's own config entry would.
+    profile.proxyCommand = readEnv(env, SINGLE_HOST_ENV.PROXY_COMMAND);
+
+    const jumpHost = readEnv(env, SINGLE_HOST_ENV.JUMP_HOST);
+    if (jumpHost == null) {
+        // A jump setting without a jump host is a half-finished entry; ignoring it would
+        // quietly connect straight to the target the operator meant to put behind a hop.
+        const strayJumpVariables = [
+            SINGLE_HOST_ENV.JUMP_PORT,
+            SINGLE_HOST_ENV.JUMP_USER,
+            SINGLE_HOST_ENV.JUMP_KEY,
+            SINGLE_HOST_ENV.JUMP_PASSPHRASE,
+            SINGLE_HOST_ENV.JUMP_PASSWORD,
+            SINGLE_HOST_ENV.JUMP_HOST_KEY,
+        ].filter((variable) => readEnv(env, variable) != null);
+
+        if (strayJumpVariables.length > 0) {
+            throw new Error(`${strayJumpVariables.join(", ")} is set, so ${SINGLE_HOST_ENV.JUMP_HOST} is required`);
+        }
+    }
+    else {
+        profile.jump = {
+            host: jumpHost,
+            port: readIntegerEnv(env, SINGLE_HOST_ENV.JUMP_PORT) ?? DEFAULT_SSH_PORT,
+            username: readEnv(env, SINGLE_HOST_ENV.JUMP_USER) ?? username,
+            password: readEnv(env, SINGLE_HOST_ENV.JUMP_PASSWORD),
+            hostKeyFingerprint: readEnv(env, SINGLE_HOST_ENV.JUMP_HOST_KEY),
+        };
+
+        // The target's key (and its passphrase) is the default, as `ssh -J` authenticates
+        // both hops with the same identity unless told otherwise.
+        const jumpKeyPath = readEnv(env, SINGLE_HOST_ENV.JUMP_KEY);
+        if (jumpKeyPath != null) {
+            profile.jump.privateKeyPath = expandHomePath(jumpKeyPath);
+            profile.jump.passphrase = readEnv(env, SINGLE_HOST_ENV.JUMP_PASSPHRASE);
+
+            if (fs.existsSync(profile.jump.privateKeyPath) == false) {
+                _logger.warn(`${SINGLE_HOST_ENV.JUMP_KEY} does not exist; connections will fail`, {
+                    private_key_path: profile.jump.privateKeyPath,
+                });
+            }
+        }
+        else {
+            profile.jump.privateKeyPath = profile.privateKeyPath;
+            profile.jump.passphrase = readEnv(env, SINGLE_HOST_ENV.JUMP_PASSPHRASE) ?? profile.passphrase;
+        }
+    }
+
     _logger.info("host profile loaded", {
         host: host,
         port: profile.port,
         username: username,
         readonly: policy.readonly,
+        jump_host: profile.jump?.host,
+        via_proxy_command: profile.proxyCommand != null,
     });
 
     return profile;
@@ -217,16 +272,27 @@ export function toHostSummary(profile: SshHostProfile): SshHostSummary {
         authMethod = "password";
     }
 
-    return {
+    const summary: SshHostSummary = {
         name: profile.name,
         host: profile.host,
         port: profile.port,
         username: profile.username,
         description: profile.description,
         authMethod: authMethod,
+        viaProxyCommand: profile.proxyCommand != null,
         readonly: profile.policy.readonly,
         allowSudo: profile.policy.allowSudo,
         allowedPaths: profile.policy.allowedPaths,
         allowCommands: profile.policy.allowCommands,
     };
+
+    if (profile.jump != null) {
+        summary.jump = {
+            host: profile.jump.host,
+            port: profile.jump.port,
+            username: profile.jump.username,
+        };
+    }
+
+    return summary;
 }

@@ -11,6 +11,7 @@ export {
     CWD_MARKER,
     SERVER_NAME,
     SERVER_VERSION,
+    PACKAGE_NAME,
     MAX_DIRECTORY_ENTRIES,
 } from "./defaults";
 

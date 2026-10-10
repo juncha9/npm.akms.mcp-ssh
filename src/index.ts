@@ -41,6 +41,7 @@ export { SERVER_NAME, SERVER_VERSION, LOG_LEVEL_ENV, SINGLE_HOST_ENV } from "./_
 export type {
     SshPolicy,
     SshHostProfile,
+    SshJumpProfile,
     SshHostSummary,
     SshExecResult,
     SshSessionInfo,

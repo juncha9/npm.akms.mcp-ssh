@@ -1,5 +1,7 @@
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { Duplex } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
 import ssh2 from "ssh2";
@@ -7,7 +9,7 @@ import type { ConnectConfig, SFTPWrapper } from "ssh2";
 
 import { CWD_MARKER, KEEPALIVE_INTERVAL_MS } from "@/_defs";
 import { $logger, quoteShellArgument, truncateOutput } from "@/_libs";
-import type { SshExecResult, SshHostProfile } from "@/_types";
+import type { SshExecResult, SshHostProfile, SshJumpProfile } from "@/_types";
 import { GuardRejectionError, canonicalizeCommand, inspectCommand, inspectWorkingDirectory } from "@/modules/guard";
 
 const { Client } = ssh2;
@@ -50,11 +52,12 @@ function resolveAgentPath(): string | undefined {
  * Without the cache every one-off tool call re-read the same file synchronously, stalling
  * the event loop for every other in-flight call.
  *
+ * @param label Names the hop in the error, e.g. the profile name or "<name> jump host".
  * @throws {Error} If the file cannot be read. The path is deliberately kept out of the
  *                 message — it reaches the model verbatim, and the rest of the codebase
  *                 (logger masking, `toHostSummary`) treats it as a secret.
  */
-function readPrivateKey(profile: SshHostProfile, keyPath: string): Buffer {
+function readPrivateKey(label: string, keyPath: string): Buffer {
     const cached = PRIVATE_KEY_CACHE.get(keyPath);
     if (cached != null) {
         return cached;
@@ -66,9 +69,37 @@ function readPrivateKey(profile: SshHostProfile, keyPath: string): Buffer {
         return contents;
     }
     catch (ex) {
-        const _logger = $logger.child({ context: "readPrivateKey", profile: profile.name });
-        _logger.error(ex, "cannot read the profile's private key file");
-        throw new Error(`cannot read the private key configured for profile '${profile.name}' (see the server log for the path)`);
+        const _logger = $logger.child({ context: "readPrivateKey", profile: label });
+        _logger.error(ex, "cannot read the private key file");
+        throw new Error(`cannot read the private key configured for '${label}' (see the server log for the path)`);
+    }
+}
+
+/** Credentials a hop authenticates with — the same three fields on the target and the jump host. */
+interface HopCredentials {
+    privateKeyPath?: string;
+    passphrase?: string;
+    password?: string;
+}
+
+/** Applies the auth order — private key, password, then the SSH agent — onto a connect config. */
+function applyAuth(connectConfig: ConnectConfig, credentials: HopCredentials, label: string): void {
+    if (credentials.privateKeyPath != null) {
+        connectConfig.privateKey = readPrivateKey(label, credentials.privateKeyPath);
+    }
+
+    if (credentials.passphrase != null) {
+        connectConfig.passphrase = credentials.passphrase;
+    }
+
+    if (credentials.password != null) {
+        connectConfig.password = credentials.password;
+    }
+
+    // No key and no password — fall back to the running SSH agent, which is how most
+    // interactive setups already authenticate.
+    if (connectConfig.privateKey == null && connectConfig.password == null) {
+        connectConfig.agent = resolveAgentPath();
     }
 }
 
@@ -79,45 +110,45 @@ export function toHostKeyFingerprint(hostKey: Buffer): string {
 }
 
 /**
- * Builds the host key check.
+ * Builds the host key check for one hop.
  *
  * ssh2 accepts *any* host key when no verifier is supplied, so without this a
  * man-in-the-middle — or a rebuilt server presenting a new key — is indistinguishable
- * from the real host. Pinning stays opt-in (`hostKeyFingerprint`) to match the permissive
+ * from the real host. Pinning stays opt-in (`pinnedFingerprint`) to match the permissive
  * defaults, but the fingerprint is always logged on first connect so it can be copied
  * into the profile.
  */
 function buildHostVerifier(
-    profile: SshHostProfile,
+    hop: { label: string; host: string; pinnedFingerprint?: string },
     onHostKeySeen: (fingerprint: string) => void
 ): (hostKey: Buffer) => boolean {
     return (hostKey: Buffer) => {
         const fingerprint = toHostKeyFingerprint(hostKey);
         onHostKeySeen(fingerprint);
 
-        const _logger = $logger.child({ context: "hostVerifier", profile: profile.name, host: profile.host });
+        const _logger = $logger.child({ context: "hostVerifier", profile: hop.label, host: hop.host });
 
-        if (profile.hostKeyFingerprint == null) {
-            _logger.info("host key accepted unpinned; add hostKeyFingerprint to the profile to pin it", {
+        if (hop.pinnedFingerprint == null) {
+            _logger.info("host key accepted unpinned; pin the fingerprint in the profile to detect a changed key", {
                 host_key_fingerprint: fingerprint,
             });
             return true;
         }
 
-        if (profile.hostKeyFingerprint === fingerprint) {
+        if (hop.pinnedFingerprint === fingerprint) {
             _logger.debug("host key matches the pinned fingerprint");
             return true;
         }
 
         _logger.error(null, "host key does not match the pinned fingerprint", {
-            expected: profile.hostKeyFingerprint,
+            expected: hop.pinnedFingerprint,
             actual: fingerprint,
         });
         return false;
     };
 }
 
-/** Profile → ssh2 connect options. */
+/** Profile → ssh2 connect options for the target hop. */
 function buildConnectConfig(
     profile: SshHostProfile,
     onHostKeySeen: (fingerprint: string) => void
@@ -128,28 +159,242 @@ function buildConnectConfig(
         username: profile.username,
         readyTimeout: profile.policy.connectTimeoutMs,
         keepaliveInterval: KEEPALIVE_INTERVAL_MS,
-        hostVerifier: buildHostVerifier(profile, onHostKeySeen),
+        hostVerifier: buildHostVerifier(
+            { label: profile.name, host: profile.host, pinnedFingerprint: profile.hostKeyFingerprint },
+            onHostKeySeen
+        ),
     };
 
-    if (profile.privateKeyPath != null) {
-        connectConfig.privateKey = readPrivateKey(profile, profile.privateKeyPath);
-    }
-
-    if (profile.passphrase != null) {
-        connectConfig.passphrase = profile.passphrase;
-    }
-
-    if (profile.password != null) {
-        connectConfig.password = profile.password;
-    }
-
-    // No key and no password — fall back to the running SSH agent, which is how most
-    // interactive setups already authenticate.
-    if (connectConfig.privateKey == null && connectConfig.password == null) {
-        connectConfig.agent = resolveAgentPath();
-    }
+    applyAuth(connectConfig, profile, profile.name);
 
     return connectConfig;
+}
+
+/**
+ * The stream the target handshake runs over when it is not a plain TCP socket, plus the
+ * resource behind it — a jump client or a proxy process — that must go when the target
+ * connection does.
+ */
+interface Transport {
+    sock: Duplex;
+    close(): void;
+}
+
+/** OpenSSH `ProxyCommand` tokens: `%h` host, `%p` port, `%r` user, `%%` a literal `%`. */
+export function expandProxyCommand(template: string, hop: { host: string; port: number; username: string }): string {
+    return template.replace(/%[hpr%]/g, (token) => {
+        if (token === "%h") {
+            return hop.host;
+        }
+
+        if (token === "%p") {
+            return String(hop.port);
+        }
+
+        if (token === "%r") {
+            return hop.username;
+        }
+
+        return "%";
+    });
+}
+
+/**
+ * Starts the proxy command and exposes its stdin/stdout as the SSH stream.
+ *
+ * Runs through the shell, as OpenSSH does, so the operator can quote arguments the way
+ * they would in `~/.ssh/config`. The process is killed when the transport closes: on
+ * Windows the shell is `cmd.exe` and the real command is its child, so the whole tree
+ * has to go or `cloudflared` would outlive the connection it was carrying.
+ */
+function openProxyCommand(profile: SshHostProfile, hop: { host: string; port: number; username: string }): Transport {
+    const command = expandProxyCommand(profile.proxyCommand ?? "", hop);
+    const _logger = $logger.child({ context: "openProxyCommand", profile: profile.name });
+    _logger.debug("starting the proxy command", { command: command });
+
+    const child = spawn(command, { shell: true, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+
+    // The command's own diagnostics — a cloudflared login prompt, a refused tunnel — are
+    // the only clue when the handshake never starts, so they go to the log at warn.
+    const stderrDecoder = new StringDecoder("utf8");
+    child.stderr.on("data", (chunk: Buffer) => {
+        const text = stderrDecoder.write(chunk).trim();
+        if (text !== "") {
+            _logger.warn("proxy command stderr", { text: text });
+        }
+    });
+
+    child.on("exit", (code, signal) => {
+        _logger.debug("proxy command exited", { exit_code: code, signal: signal });
+    });
+
+    const sock = Duplex.from({ readable: child.stdout, writable: child.stdin });
+
+    // Permanent listener: killing the process tears its pipes down, and the stream reports
+    // that as an error. ssh2 only listens once it has been handed the stream, so a kill
+    // before the handshake (an unreadable jump key, a disconnect mid-setup) would
+    // otherwise surface as an unhandled 'error' and take the whole server down.
+    sock.on("error", (error: Error) => {
+        _logger.debug("proxy command stream error", { error_message: error.message });
+    });
+
+    // A spawn failure surfaces on the child, not on the stream; forward it so ssh2
+    // reports it as a socket error instead of waiting for the ready timeout.
+    child.on("error", (error: Error) => {
+        sock.destroy(error);
+    });
+
+    // Latch: close() is reached from both the jump client's and the target client's
+    // 'close' handlers when the two are stacked, and one kill is enough.
+    let closed = false;
+
+    return {
+        sock: sock,
+        close: () => {
+            if (closed == true) {
+                return;
+            }
+            closed = true;
+
+            if (child.exitCode != null || child.signalCode != null) {
+                return;
+            }
+
+            if (process.platform === "win32" && child.pid != null) {
+                const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+                // Without a listener a failure to even start taskkill is an unhandled
+                // 'error' event, which takes the whole server down with it.
+                killer.on("error", (error: Error) => {
+                    _logger.error(error, "failed to kill the proxy command's process tree");
+                });
+                return;
+            }
+
+            child.kill();
+        },
+    };
+}
+
+/**
+ * Connects to the jump host and opens a forwarded TCP channel to the target, which the
+ * target handshake then runs over — what `ssh -J` does.
+ *
+ * @param proxy Carries the jump hop itself when a proxy command is also configured.
+ * @throws {Error} If the jump host cannot be reached or refuses the forward. The message
+ *                 names the jump host, so a failure there is not mistaken for the target.
+ */
+function openJumpTransport(
+    profile: SshHostProfile,
+    jump: SshJumpProfile,
+    proxy: Transport | null,
+    onHostKeySeen: (fingerprint: string) => void
+): Promise<Transport> {
+    const label = `${profile.name} jump host`;
+    const endpoint = `${jump.username}@${jump.host}:${jump.port}`;
+    const _logger = $logger.child({ context: "openJumpTransport", profile: profile.name, jump_host: jump.host });
+
+    const jumpConfig: ConnectConfig = {
+        host: jump.host,
+        port: jump.port,
+        username: jump.username,
+        readyTimeout: profile.policy.connectTimeoutMs,
+        keepaliveInterval: KEEPALIVE_INTERVAL_MS,
+        hostVerifier: buildHostVerifier(
+            { label: label, host: jump.host, pinnedFingerprint: jump.hostKeyFingerprint },
+            onHostKeySeen
+        ),
+    };
+
+    applyAuth(jumpConfig, jump, label);
+
+    if (proxy != null) {
+        jumpConfig.sock = proxy.sock;
+    }
+
+    return new Promise<Transport>((resolve, reject) => {
+        const jumpClient = new Client();
+        let settled = false;
+
+        jumpClient.on("error", (error: Error) => {
+            if (settled == false) {
+                settled = true;
+                jumpClient.destroy();
+                reject(new Error(`jump host ${endpoint}: ${error.message}`));
+                return;
+            }
+
+            _logger.error(error, "jump host connection error after ready");
+        });
+
+        jumpClient.on("close", () => {
+            _logger.debug("jump host connection closed");
+            proxy?.close();
+
+            if (settled == false) {
+                settled = true;
+                reject(new Error(`jump host ${endpoint}: connection closed before the handshake completed`));
+            }
+        });
+
+        jumpClient.once("ready", () => {
+            if (settled == true) {
+                return;
+            }
+
+            jumpClient.forwardOut("127.0.0.1", 0, profile.host, profile.port, (error, stream) => {
+                if (settled == true) {
+                    return;
+                }
+                settled = true;
+
+                if (error != null) {
+                    jumpClient.end();
+                    reject(new Error(`jump host ${endpoint} refused the forward to ${profile.host}:${profile.port}: ${error.message}`));
+                    return;
+                }
+
+                _logger.info("jump host connected, target channel forwarded");
+                resolve({
+                    sock: stream,
+                    close: () => {
+                        jumpClient.end();
+                    },
+                });
+            });
+        });
+
+        jumpClient.connect(jumpConfig);
+    });
+}
+
+/**
+ * Opens whatever carries the target handshake: nothing for a direct TCP connection, a
+ * proxy process, a jump channel, or a jump channel whose own hop runs over the proxy.
+ */
+async function openTransport(
+    profile: SshHostProfile,
+    onJumpHostKeySeen: (fingerprint: string) => void
+): Promise<Transport | null> {
+    let proxy: Transport | null = null;
+    if (profile.proxyCommand != null) {
+        proxy = openProxyCommand(profile, profile.jump ?? profile);
+    }
+
+    if (profile.jump == null) {
+        return proxy;
+    }
+
+    // The proxy process is already running by now; a jump hop that cannot even be set
+    // up (an unreadable jump key throws before any socket is touched) must not leave it
+    // behind as an orphan.
+    try {
+        const jumpTransport = await openJumpTransport(profile, profile.jump, proxy, onJumpHostKeySeen);
+        return jumpTransport;
+    }
+    catch (ex) {
+        proxy?.close();
+        throw ex;
+    }
 }
 
 /**
@@ -222,6 +467,7 @@ export class SshConnection {
     /** Set when the peer closed a previously established connection. */
     private droppedAfterReady = false;
     private observedFingerprint: string | null = null;
+    private observedJumpFingerprint: string | null = null;
 
     constructor(public readonly profile: SshHostProfile) {
     }
@@ -235,6 +481,11 @@ export class SshConnection {
         return this.observedFingerprint;
     }
 
+    /** Host key the jump host presented; null without a jump host or before its handshake. */
+    get jumpHostKeyFingerprint(): string | null {
+        return this.observedJumpFingerprint;
+    }
+
     /** True when a connection was established and then lost, so shell state is gone. */
     get wasDropped(): boolean {
         return this.droppedAfterReady;
@@ -243,8 +494,11 @@ export class SshConnection {
     /**
      * Opens the connection, or joins the in-flight attempt when one is already running.
      *
+     * With a proxy command or a jump host the carrier is opened first and handed to ssh2
+     * as the socket; it is torn down with the target connection, whichever side closes.
+     *
      * @throws {Error} If the connection was closed, authentication fails, the host is
-     *                 unreachable, or the handshake times out.
+     *                 unreachable, the handshake times out, or the carrier cannot be opened.
      */
     async connect(): Promise<void> {
         if (this.disposed == true) {
@@ -272,56 +526,93 @@ export class SshConnection {
             this.observedFingerprint = fingerprint;
         });
 
-        this.connecting = new Promise<void>((resolve, reject) => {
-            const client = new Client();
-            this.pendingClient = client;
-            let settled = false;
+        this.connecting = (async () => {
+            const transport = await openTransport(this.profile, (fingerprint) => {
+                this.observedJumpFingerprint = fingerprint;
+            });
 
-            // One permanent 'error' listener, installed before connect() and never
-            // removed. Registering it with `once` left the client listener-less after the
-            // first error, and ssh2 emits 'error' again while the socket tears down —
-            // an unhandled 'error' event takes down the whole server process.
-            client.on("error", (error: Error) => {
-                if (settled == false) {
+            // disconnect() may have run while the carrier was being opened.
+            if (this.disposed == true) {
+                transport?.close();
+                throw new Error(`ssh connection for '${this.profile.name}' was closed during the handshake`);
+            }
+
+            if (transport != null) {
+                connectConfig.sock = transport.sock;
+            }
+
+            await new Promise<void>((resolve, reject) => {
+                const client = new Client();
+                this.pendingClient = client;
+                let settled = false;
+
+                // One permanent 'error' listener, installed before connect() and never
+                // removed. Registering it with `once` left the client listener-less after the
+                // first error, and ssh2 emits 'error' again while the socket tears down —
+                // an unhandled 'error' event takes down the whole server process.
+                client.on("error", (error: Error) => {
+                    if (settled == false) {
+                        settled = true;
+                        this.pendingClient = null;
+                        client.destroy();
+                        reject(error);
+                        return;
+                    }
+
+                    // Only a live connection's error is news. A failed handshake is
+                    // already reported through reject(); ssh2 keeps emitting while the
+                    // socket tears down ("Connection lost before handshake", an abort
+                    // from the destroyed proxy stream) and those are just the aftermath.
+                    if (this.client !== client) {
+                        _logger.debug("ssh connection error during teardown", { error_message: error.message });
+                        return;
+                    }
+
+                    _logger.error(error, "ssh connection error after ready");
+                });
+
+                client.on("close", () => {
+                    // Whichever side closed, the carrier behind this connection is done with.
+                    transport?.close();
+
+                    if (this.client === client) {
+                        _logger.debug("ssh connection closed by the peer");
+                        this.client = null;
+                        this.droppedAfterReady = true;
+                        return;
+                    }
+
+                    // A carrier that ends before the handshake (a proxy command that exited at
+                    // once) closes without a usable 'error'; settle here or connect() hangs.
+                    if (settled == false) {
+                        settled = true;
+                        this.pendingClient = null;
+                        reject(new Error("connection closed before the handshake completed"));
+                    }
+                });
+
+                client.once("ready", () => {
+                    if (settled == true) {
+                        return;
+                    }
                     settled = true;
                     this.pendingClient = null;
-                    client.destroy();
-                    reject(error);
-                    return;
-                }
 
-                _logger.error(error, "ssh connection error after ready");
+                    // disconnect() may have run while the handshake was in flight; adopting
+                    // the client now would leak a live connection nothing can ever close.
+                    if (this.disposed == true) {
+                        client.destroy();
+                        reject(new Error(`ssh connection for '${this.profile.name}' was closed during the handshake`));
+                        return;
+                    }
+
+                    this.client = client;
+                    resolve();
+                });
+
+                client.connect(connectConfig);
             });
-
-            client.on("close", () => {
-                if (this.client === client) {
-                    _logger.debug("ssh connection closed by the peer");
-                    this.client = null;
-                    this.droppedAfterReady = true;
-                }
-            });
-
-            client.once("ready", () => {
-                if (settled == true) {
-                    return;
-                }
-                settled = true;
-                this.pendingClient = null;
-
-                // disconnect() may have run while the handshake was in flight; adopting
-                // the client now would leak a live connection nothing can ever close.
-                if (this.disposed == true) {
-                    client.destroy();
-                    reject(new Error(`ssh connection for '${this.profile.name}' was closed during the handshake`));
-                    return;
-                }
-
-                this.client = client;
-                resolve();
-            });
-
-            client.connect(connectConfig);
-        });
+        })();
 
         try {
             await this.connecting;

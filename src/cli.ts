@@ -4,19 +4,42 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { LOG_LEVEL_ENV, SERVER_NAME, SERVER_VERSION, SINGLE_HOST_ENV } from "@/_defs";
 import { $logger } from "@/_libs";
 import type { SshHostProfile } from "@/_types";
-import { SshConnection } from "@/modules/ssh";
+import { runConfigCommand, runConnectionCheck } from "@/modules/manage";
 import { createSshMcpServer } from "@/server";
 
 interface CliArguments {
     showHelp: boolean;
     showVersion: boolean;
     checkOnly: boolean;
+    /** `config` as the first argument opens the host manager instead of the server. */
+    configMode: boolean;
+    /** `--target <id>` — the client `config` opens on. */
+    targetId?: string;
 }
 
 function parseArguments(argv: string[]): CliArguments {
-    const parsed: CliArguments = { showHelp: false, showVersion: false, checkOnly: false };
+    const parsed: CliArguments = { showHelp: false, showVersion: false, checkOnly: false, configMode: false };
 
-    for (const argument of argv) {
+    let rest = argv;
+    if (argv[0] === "config") {
+        parsed.configMode = true;
+        rest = argv.slice(1);
+    }
+
+    for (let index = 0; index < rest.length; index += 1) {
+        const argument = rest[index];
+
+        if (argument === "--target") {
+            parsed.targetId = rest[index + 1];
+            index += 1;
+            continue;
+        }
+
+        if (argument.startsWith("--target=") == true) {
+            parsed.targetId = argument.slice("--target=".length);
+            continue;
+        }
+
         if (argument === "--help" || argument === "-h") {
             parsed.showHelp = true;
             continue;
@@ -41,10 +64,18 @@ const HELP_TEXT = [
     "",
     "Usage:",
     "  akms-mcp-ssh [--check]",
+    "  akms-mcp-ssh config [--target <client>]",
+    "",
+    "Commands:",
+    "  config               Manage the SSH hosts registered in an MCP client's config —",
+    "                       list, add, edit, remove, check, print. Asks plain questions,",
+    "                       so the SSH_* names below never have to be typed.",
     "",
     "Options:",
     "      --check          Connect to the configured host, report the result, and exit.",
     "                       Prints the host key fingerprint so it can be pinned.",
+    "      --target <id>    config: claude-code | codex | claude-desktop | cursor",
+    "                       (default: the first one installed)",
     "  -v, --version        Print the version and exit",
     "  -h, --help           Print this help and exit",
     "",
@@ -59,6 +90,11 @@ const HELP_TEXT = [
     `  ${SINGLE_HOST_ENV.NAME}          Alias shown to the model; defaults to the hostname`,
     `  ${SINGLE_HOST_ENV.DESCRIPTION}   Shown to the model — say what the host is for`,
     `  ${SINGLE_HOST_ENV.CWD}           Directory new sessions start in`,
+    `  ${SINGLE_HOST_ENV.PROXY_COMMAND} Command carrying the SSH stream on its stdin/stdout (OpenSSH ProxyCommand);`,
+    "                     %h / %p / %r expand to the first hop's host, port and user",
+    `  ${SINGLE_HOST_ENV.JUMP_HOST}     Jump host the target is reached through (OpenSSH ProxyJump / -J)`,
+    `  ${SINGLE_HOST_ENV.JUMP_PORT} / ${SINGLE_HOST_ENV.JUMP_USER} / ${SINGLE_HOST_ENV.JUMP_KEY} / ${SINGLE_HOST_ENV.JUMP_PASSPHRASE} / ${SINGLE_HOST_ENV.JUMP_PASSWORD} / ${SINGLE_HOST_ENV.JUMP_HOST_KEY}`,
+    `                     Jump host connection; user and key default to ${SINGLE_HOST_ENV.USER} / ${SINGLE_HOST_ENV.KEY}`,
     `  ${SINGLE_HOST_ENV.READONLY}      Reject write commands, redirections, uploads  (default false)`,
     `  ${SINGLE_HOST_ENV.ALLOW_SUDO}    Allow sudo / su / doas  (default true)`,
     `  ${SINGLE_HOST_ENV.ALLOW_COMMANDS}  Comma-separated allow-list of binaries`,
@@ -72,82 +108,21 @@ const HELP_TEXT = [
 ].join("\n");
 
 /**
- * How the host will authenticate, including the key path.
- *
- * The path is shown here but withheld from the runtime error message: `--check` is run by
- * the operator on their own terminal, whereas that message is handed to a model.
- */
-function describeAuth(profile: SshHostProfile): string {
-    if (profile.privateKeyPath != null) {
-        return `key ${profile.privateKeyPath}`;
-    }
-
-    if (profile.password != null) {
-        return "password";
-    }
-
-    return "ssh agent";
-}
-
-/**
- * Connects to the configured host and reports what happened.
- *
- * Without this the only way to find out whether the setup works is to ask an agent to try
- * something, which mixes a setup mistake up with a policy rejection. Writes to stdout
+ * `--check`: connects to the configured host and reports what happened. The report itself
+ * is shared with `config`, so a host that passes setup passes `--check`. Writes to stdout
  * because this mode is not an MCP session.
  *
  * @returns Process exit code: 0 when the host is reachable.
  */
-async function runConnectionCheck(profile: SshHostProfile | null): Promise<number> {
+async function runCheckCommand(profile: SshHostProfile | null): Promise<number> {
     if (profile == null) {
-        process.stdout.write(`No SSH host is registered — set ${SINGLE_HOST_ENV.HOST} and ${SINGLE_HOST_ENV.USER}.\n`);
+        process.stdout.write(`No SSH host is registered — set ${SINGLE_HOST_ENV.HOST} and ${SINGLE_HOST_ENV.USER}, or run: akms-mcp-ssh config
+`);
         return 1;
     }
 
-    const endpoint = `${profile.username}@${profile.host}:${profile.port}`;
-    const auth = describeAuth(profile);
-    process.stdout.write(`Checking ${profile.name}  →  ${endpoint}\n\n`);
-
-    const connection = new SshConnection(profile);
-    const startedAt = Date.now();
-
-    let connected = false;
-    let detail = "";
-
-    try {
-        await connection.connect();
-        connected = true;
-    }
-    catch (ex) {
-        detail = String(ex);
-        if (ex instanceof Error) {
-            detail = ex.message;
-        }
-    }
-    finally {
-        connection.disconnect();
-    }
-
-    const durationMs = Date.now() - startedAt;
-
-    if (connected == true) {
-        process.stdout.write(`  OK      ${endpoint}  (${auth}, ${durationMs}ms)\n`);
-    }
-    else {
-        process.stdout.write(`  FAILED  ${endpoint}  (${auth})\n`);
-        process.stdout.write(`          ${detail}\n`);
-    }
-
-    if (connection.hostKeyFingerprint != null) {
-        let pinNote = `not pinned — set ${SINGLE_HOST_ENV.HOST_KEY} to it to detect a changed key`;
-        if (profile.hostKeyFingerprint != null) {
-            pinNote = "pinned";
-        }
-
-        process.stdout.write(`          host key ${connection.hostKeyFingerprint}  (${pinNote})\n`);
-    }
-
-    if (connected == true) {
+    const result = await runConnectionCheck(profile, process.stdout);
+    if (result.connected == true) {
         return 0;
     }
 
@@ -169,17 +144,34 @@ async function main(): Promise<void> {
         return;
     }
 
-    // `--check` prints a report a person reads; interleaved log lines make it unreadable.
+    if (cliArguments.configMode == true) {
+        // The manager is a terminal UI: log lines on stderr would land in the middle of a
+        // prompt. Warnings stay — a missing key file is worth seeing during setup.
+        if (process.env[LOG_LEVEL_ENV] == null) {
+            process.env[LOG_LEVEL_ENV] = "warn";
+        }
+
+        const exitCode = await runConfigCommand({
+            input: process.stdin,
+            output: process.stdout,
+            targetId: cliArguments.targetId,
+        });
+        process.exit(exitCode);
+    }
+
+    // `--check` prints a report a person reads; routine log lines interleaved with it
+    // make it unreadable, so only warnings and errors get through — a missing key file,
+    // or a proxy command's stderr, which is where a `cloudflared` login prompt appears.
     // An explicit level still wins, so `SSH_MCP_LOG_LEVEL=debug --check` stays available
     // for diagnosing a connection that fails for an unclear reason.
     if (cliArguments.checkOnly == true && process.env[LOG_LEVEL_ENV] == null) {
-        process.env[LOG_LEVEL_ENV] = "silent";
+        process.env[LOG_LEVEL_ENV] = "warn";
     }
 
     const instance = createSshMcpServer();
 
     if (cliArguments.checkOnly == true) {
-        const exitCode = await runConnectionCheck(instance.profile);
+        const exitCode = await runCheckCommand(instance.profile);
         instance.shutdown();
         process.exit(exitCode);
     }

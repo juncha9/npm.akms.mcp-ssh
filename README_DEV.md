@@ -26,10 +26,11 @@ src/
 ├── modules/
 │   ├── config/  SSH_* readers, profile builder, credential-free summary
 │   ├── guard/   command + path inspection, GuardRejectionError
+│   ├── manage/  the `config` command: prompts, wizard, per-client config writers
 │   ├── ssh/     ssh2 connection, session manager, SFTP ops
 │   └── tools/   MCP tool registration, output formatting
 ├── server.ts    createSshMcpServer()
-├── cli.ts       bin entry (stdio transport, --check)
+├── cli.ts       bin entry (stdio transport, --check, config)
 └── index.ts     library entry
 ```
 
@@ -84,6 +85,18 @@ A malformed value aborts startup rather than being ignored: `SSH_READONLY=ture` 
 
 A dropped connection is reported rather than re-dialled. Reconnecting hands back a fresh login shell — environment, sudo cache and background jobs gone — while the model still believes it holds the old one.
 
+### A jump host or proxy command is a carrier, not a second connection
+
+`SshConnection.connect` opens the carrier first — the proxy process, the jump client's forwarded channel, or the channel riding on the proxy — and hands it to ssh2 as `sock`. The target handshake is then the same code path as a direct TCP connection: one client, one `hostVerifier`, the same ready / error / close handling. The carrier is released from the target client's `close` handler, whichever side closed, so nothing has to remember to tear it down.
+
+The proxy command runs through the shell, as OpenSSH's `ProxyCommand` does. On Windows that puts `cmd.exe` between us and the real process, so the transport kills the process tree (`taskkill /T`) rather than just the shell — otherwise `cloudflared` would outlive the connection it carried.
+
+### `config` writes through whatever owns the file
+
+The `config` command edits other programs' config files, so each target is written the least invasive way available. `~/.claude.json` is Claude Code's own state file, rewritten by the running process, so writes go through `claude mcp add-json` / `remove` and the file is only read. Codex's TOML is rewritten by section with no TOML dependency: only `[mcp_servers.<name>]` and its `.env` table are rebuilt, and every other line comes back byte for byte. Plain `mcpServers` JSON files are merged one key at a time, and a file that does not parse is never written.
+
+The connection check feeds the entry about to be written through `loadHostProfile(env)` and the same report `--check` prints. A value the server would reject is therefore caught before it is written, and a host that passes setup passes `--check`. Full rules and rationale are in [docs/design/config-command.md](docs/design/config-command.md).
+
 ## 🧪 Testing
 
 350+ tests, no network access required.
@@ -93,15 +106,21 @@ A dropped connection is reported rather than re-dialled. Reconnecting hands back
 | `command-guard.test.ts` | Segment splitting, binary resolution, per-policy verdicts |
 | `guard-bypass.test.ts` | Regression suite — every evasion found in review |
 | `path-guard.test.ts` | Remote allow-list, traversal, local credential rules |
-| `host-profile.test.ts` | `SSH_*` mapping, defaults, malformed values, secret masking |
+| `host-profile.test.ts` | `SSH_*` mapping, defaults, malformed values, secret masking, jump / proxy route variables |
 | `logger.test.ts` | Level resolution, secret masking |
 | `remote-command.test.ts` | Command wrapping, cwd marker, truncation |
 | `exec-integration.test.ts` | **Live ssh2 server** — exit codes, UTF-8, timeouts, host keys, stdin EOF |
 | `sftp-integration.test.ts` | **Live SFTP subsystem** — listings, partial reads, transfers |
+| `route-integration.test.ts` | **Live jump host + proxy command** — a bastion `ssh2.Server` that forwards `direct-tcpip`, and `tests/_fixtures/tcp-relay.cjs` as a cross-platform `nc %h %p` |
 | `tool-integration.test.ts` | **MCP client ↔ server** over an in-memory transport |
+| `manage-entry.test.ts` | `config` answers ⇄ entry, carried variables, the `loadHostProfile(env)` contract |
+| `manage-toml.test.ts` | Codex TOML: append, replace keeping hand-added keys, remove, CRLF |
+| `manage-command.test.ts` | **The `config` UI end to end** — scripted stdin, a live `ssh2.Server`, a temp JSON config |
+| `manage-cli-shim.test.ts` | Windows only — a JSON payload through npm's `.cmd` shim template, byte for byte |
 
 Two integration styles matter here:
 
+- `route-integration` stands up two servers — a target and a bastion that answers `direct-tcpip` with a real socket — so the jump path is the actual `forwardOut` channel, and the proxy path really spawns a process and speaks SSH over its pipes. Nothing is mocked below ssh2.
 - `exec-integration` / `sftp-integration` stand up a real `ssh2.Server` in-process, so assertions are about the actual wire (`cd '/var/log'` really is sent; a multi-byte character really does survive a packet boundary). The SFTP one implements OPEN/READ/WRITE/READDIR/STAT over an in-memory filesystem.
 - `tool-integration` connects an MCP `Client` to the server through `InMemoryTransport`. It is the only place proving the handlers *reach* the guards — deleting a guard call used to leave every other test green.
 

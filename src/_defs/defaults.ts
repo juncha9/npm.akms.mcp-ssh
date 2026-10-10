@@ -28,4 +28,7 @@ export const MAX_DIRECTORY_ENTRIES = 1_000;
 
 export const SERVER_NAME = "akms-mcp-ssh";
 
-export const SERVER_VERSION = "0.0.3";
+/** What `npx -y …` resolves — the `args` the `config` command writes into every entry. */
+export const PACKAGE_NAME = "@akms/mcp-ssh";
+
+export const SERVER_VERSION = "0.1.0";

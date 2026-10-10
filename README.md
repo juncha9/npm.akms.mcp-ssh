@@ -15,7 +15,32 @@ npx -y @akms/mcp-ssh --help    # or run it straight from the registry
 
 ## ⚙️ MCP client setup
 
-**One server entry per host** — plain `SSH_*` variables, no config file, no JSON inside JSON. Claude Code reads `.mcp.json` in the project or `~/.claude.json` globally; Claude Desktop takes the same block inside `claude_desktop_config.json`:
+**Let the CLI write it.** `config` opens a small manager for the hosts registered in a client's config. It asks plain questions — host, user, key or password, jump host, read-only — tests the connection, offers to pin the host key, and writes the entry. No `SSH_*` name has to be remembered.
+
+```bash
+npx -y @akms/mcp-ssh config                  # opens on the first client found on this machine
+npx -y @akms/mcp-ssh config --target codex   # claude-code | codex | claude-desktop | cursor
+```
+
+```
+Claude Code (user scope) — /home/me/.claude.json
+
+  #  Server    Endpoint            Auth  Notes
+  1  ssh-prod  deploy@10.0.0.5:22  key   readonly, pinned
+
+  a) add   e) edit   r) remove   c) check   p) print   t) switch client   q) quit
+```
+
+| Client | Config file | How it is written |
+|---|---|---|
+| Claude Code | `~/.claude.json` (user scope) | through `claude mcp add-json … -s user`, never by editing the file |
+| Codex | `~/.codex/config.toml` | only the `[mcp_servers.<name>]` tables are rewritten; keys you added to them stay |
+| Claude Desktop | `claude_desktop_config.json` | `mcpServers.<name>` is set, every other key kept |
+| Cursor | `~/.cursor/mcp.json` | same |
+
+Only entries that launch this package are listed or touched. An edit keeps every `SSH_*` variable the wizard does not ask about (timeouts, deny patterns, `SSH_CWD`, …). `p` prints an entry as JSON, as a Codex TOML table and as a `claude mcp add-json` line, for when pasting is easier. On Windows the entry launches through `cmd /c npx`, the form Claude Code expects for npx servers there.
+
+**Or by hand — one server entry per host** — plain `SSH_*` variables, no config file, no JSON inside JSON. Claude Code reads `.mcp.json` in the project or `~/.claude.json` globally; Claude Desktop takes the same block inside `claude_desktop_config.json`:
 
 ```json
 {
@@ -54,8 +79,49 @@ Every setting is an environment variable in this server's own entry. There is no
 | `SSH_NAME` | Alias shown to the agent; defaults to the hostname |
 | `SSH_DESCRIPTION` | Shown to the agent — say what the host is for |
 | `SSH_CWD` | Directory new sessions start in |
+| `SSH_PROXY_COMMAND` | Command whose stdin/stdout carry the SSH stream — OpenSSH's `ProxyCommand`. `%h` / `%p` / `%r` expand to the first hop's host, port and user, `%%` to a literal `%` |
+| `SSH_JUMP_HOST` | Jump host the target is reached through — OpenSSH's `ProxyJump` / `-J` |
+| `SSH_JUMP_PORT` | Default `22` |
+| `SSH_JUMP_USER` | Defaults to `SSH_USER` |
+| `SSH_JUMP_KEY` | **Path** to the jump host's private key; defaults to `SSH_KEY` (and then shares `SSH_PASSPHRASE`) |
+| `SSH_JUMP_PASSPHRASE` | Passphrase for `SSH_JUMP_KEY` |
+| `SSH_JUMP_PASSWORD` | Password auth on the jump host |
+| `SSH_JUMP_HOST_KEY` | Pin the jump host's key, `SHA256:…` |
 
 Authentication is tried in this order: **private key by path** (with `SSH_PASSPHRASE` if encrypted), **password**, then the **SSH agent** when neither is set (`SSH_AUTH_SOCK`, or the OpenSSH named pipe on Windows). A key path that doesn't exist is reported at startup, not at first connection.
+
+### Through a jump host or a proxy command
+
+`~/.ssh/config` is **not** read — the server never shells out to `ssh` — so a `ProxyJump` or `ProxyCommand` that works on the command line has to be stated in the entry. Both OpenSSH shapes are available, and they compose:
+
+```json
+"ssh-dev": {
+    "command": "npx", "args": ["-y", "@akms/mcp-ssh"],
+    "env": {
+        "SSH_HOST": "10.0.16.12", "SSH_USER": "ubuntu", "SSH_KEY": "~/.ssh/id_ed25519",
+        "SSH_JUMP_HOST": "dev-ak-ssh.example.com",
+        "SSH_PROXY_COMMAND": "cloudflared access ssh --hostname %h"
+    }
+}
+```
+
+- **`SSH_JUMP_HOST`** connects to the jump host first and opens a forwarded TCP channel to `SSH_HOST:SSH_PORT`, which the target handshake then runs over — exactly what `ssh -J` does. The jump host authenticates in the same order from `SSH_JUMP_*` — user and key fall back to the target's, the password does not — and its host key can be pinned with `SSH_JUMP_HOST_KEY`. Any `SSH_JUMP_*` set without `SSH_JUMP_HOST` fails startup rather than quietly connecting straight to the target.
+- **`SSH_PROXY_COMMAND`** starts the command through the shell and talks SSH over its stdin/stdout, as `ProxyCommand` does — `cloudflared access ssh --hostname %h`, `ssh -W %h:%p bastion`, `nc %h %p`. It carries the **first hop**: the jump host when one is set, otherwise the target. The entry above therefore reads "cloudflared to the jump host, then forward to 10.0.16.12".
+- Either alone works too: a jump host reachable directly needs only `SSH_JUMP_HOST`; a host behind a Cloudflare Access tunnel needs only `SSH_PROXY_COMMAND`.
+
+The proxy process lives exactly as long as the connection it carries and is killed with it (the whole process tree on Windows). Its stderr goes to the log at `warn`, which is where a `cloudflared` login prompt or a refused tunnel shows up. Log in once with `cloudflared access login <url>` before wiring the entry up: the server cannot open a browser for you, and `SSH_CONNECT_TIMEOUT_MS` expires first.
+
+`--check` prints the route and both host key fingerprints, so the jump host's key can be pinned the same way:
+
+```
+Checking 10.0.16.12  →  ubuntu@10.0.16.12:22
+  via proxy command: cloudflared access ssh --hostname %h
+  via jump host: ubuntu@dev-ak-ssh.example.com:22
+
+  OK      ubuntu@10.0.16.12:22  (key /home/me/.ssh/id_ed25519, 1840ms)
+          host key SHA256:9x2K…  (not pinned — set SSH_HOST_KEY to it to detect a changed key)
+          jump host key SHA256:Qm7d…  (not pinned — set SSH_JUMP_HOST_KEY to it to detect a changed key)
+```
 
 ### Policy
 
@@ -100,7 +166,7 @@ Add a server entry per host. Each one carries its own connection and its own pol
 akms-mcp-ssh --check          # or: npx -y @akms/mcp-ssh --check
 ```
 
-Connects to the configured host and reports what happened — exit code 0 when it is reachable. Otherwise a setup mistake is indistinguishable from a policy rejection when the agent tries something. Add `SSH_MCP_LOG_LEVEL=debug` to see the handshake.
+Connects to the configured host and reports what happened — exit code 0 when it is reachable. Otherwise a setup mistake is indistinguishable from a policy rejection when the agent tries something. Warnings still print during the check (a missing key file, the proxy command's stderr); add `SSH_MCP_LOG_LEVEL=debug` to see the handshake.
 
 ```
 Checking prod-web  →  deploy@10.0.0.5:22
@@ -115,7 +181,7 @@ That fingerprint is the same string `ssh-keyscan -t ed25519 host | ssh-keygen -l
 
 | Tool | Purpose |
 |---|---|
-| `ssh_list_hosts` | The configured host and its guard policy. No credentials |
+| `ssh_list_hosts` | The configured host, its route and its guard policy. No credentials |
 | `ssh_connect` | Open a reusable session, returns a session id |
 | `ssh_disconnect` | Close a session |
 | `ssh_list_sessions` | Open sessions with cwd, command count and idle time |
@@ -176,7 +242,7 @@ Everything goes to **stderr** (stdout is the MCP protocol channel). `SSH_MCP_LOG
 
 **The real boundary is the remote account.** The guards stop mistakes; containment has to come from the host — give each server entry a dedicated unprivileged user rather than `root`, restrict its `sudoers` entries to the exact commands it needs, pair `SSH_READONLY=true` with filesystem permissions that agree with it, reach for `SSH_ALLOW_COMMANDS` on the strictest hosts, and back up anything you would miss.
 
-- The MCP client entry names the host and may hold `SSH_PASSWORD` or `SSH_PASSPHRASE`. Prefer a key file so only its *path* is stored, keep the entry out of version control, and `chmod 600` it — the shipped `.gitignore` already excludes `*.pem`, `id_rsa*` and `id_ed25519*`.
+- The MCP client entry names the host and may hold `SSH_PASSWORD` or `SSH_PASSPHRASE` (and their `SSH_JUMP_*` counterparts). Prefer a key file so only its *path* is stored, keep the entry out of version control, and `chmod 600` it — the shipped `.gitignore` already excludes `*.pem`, `id_rsa*` and `id_ed25519*`.
 - **Anything the agent can reach, a prompt injection can reach.** Output from a remote host is untrusted input; a file the agent reads can contain instructions. With permissive defaults that matters more, not less — keep a production entry `SSH_READONLY=true` and let write access be a deliberate exception.
 - The catastrophe rules are the *only* ones that hold regardless of configuration, and even they read the command as text. Treat them as a seatbelt, not a cage.
 - Point this at hosts you are authorized to administer. This is an administration tool, not a scanner.

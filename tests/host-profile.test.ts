@@ -167,7 +167,104 @@ describe("loadHostProfile — malformed values abort startup", () => {
     });
 });
 
+describe("loadHostProfile - route", () => {
+    it("leaves the route empty when no proxy or jump variable is set", () => {
+        process.env.SSH_HOST = "10.0.0.5";
+        process.env.SSH_USER = "deploy";
+
+        const profile = loadHostProfile();
+
+        expect(profile?.proxyCommand).toBeUndefined();
+        expect(profile?.jump).toBeUndefined();
+    });
+
+    it("keeps the proxy command verbatim, tokens included", () => {
+        process.env.SSH_HOST = "10.0.0.5";
+        process.env.SSH_USER = "deploy";
+        process.env.SSH_PROXY_COMMAND = "cloudflared access ssh --hostname %h";
+
+        expect(loadHostProfile()?.proxyCommand).toBe("cloudflared access ssh --hostname %h");
+    });
+
+    it("defaults the jump user, key and passphrase to the target's", () => {
+        process.env.SSH_HOST = "10.0.16.12";
+        process.env.SSH_USER = "ubuntu";
+        process.env.SSH_KEY = "~/.ssh/id_ed25519";
+        process.env.SSH_PASSPHRASE = "PASSPHRASE-SENTINEL-9271";
+        process.env.SSH_JUMP_HOST = "dev-ak-ssh";
+
+        const profile = loadHostProfile();
+
+        expect(profile?.jump?.host).toBe("dev-ak-ssh");
+        expect(profile?.jump?.port).toBe(22);
+        expect(profile?.jump?.username).toBe("ubuntu");
+        expect(profile?.jump?.privateKeyPath).toBe(profile?.privateKeyPath);
+        expect(profile?.jump?.passphrase).toBe("PASSPHRASE-SENTINEL-9271");
+    });
+
+    it("maps every SSH_JUMP_* variable onto the jump profile", () => {
+        process.env.SSH_HOST = "10.0.16.12";
+        process.env.SSH_USER = "ubuntu";
+        process.env.SSH_KEY = "~/.ssh/id_ed25519";
+        process.env.SSH_PASSPHRASE = "target-passphrase";
+        process.env.SSH_JUMP_HOST = "dev-ak-ssh";
+        process.env.SSH_JUMP_PORT = "2222";
+        process.env.SSH_JUMP_USER = "bastion";
+        process.env.SSH_JUMP_KEY = "~/.ssh/jump_key";
+        process.env.SSH_JUMP_PASSPHRASE = "jump-passphrase";
+        process.env.SSH_JUMP_PASSWORD = "jump-password";
+        process.env.SSH_JUMP_HOST_KEY = "SHA256:jump";
+
+        const jump = loadHostProfile()?.jump;
+
+        expect(jump?.port).toBe(2222);
+        expect(jump?.username).toBe("bastion");
+        expect(jump?.privateKeyPath).toContain("jump_key");
+        expect(path.isAbsolute(jump?.privateKeyPath as string)).toBe(true);
+        // An explicit jump key takes only its own passphrase, never the target's.
+        expect(jump?.passphrase).toBe("jump-passphrase");
+        expect(jump?.password).toBe("jump-password");
+        expect(jump?.hostKeyFingerprint).toBe("SHA256:jump");
+    });
+
+    // A jump setting without a jump host would otherwise connect straight to the target
+    // the operator meant to put behind a hop.
+    it.each(["SSH_JUMP_USER", "SSH_JUMP_KEY", "SSH_JUMP_PORT"])("rejects %s without SSH_JUMP_HOST", (variable) => {
+        process.env.SSH_HOST = "10.0.0.5";
+        process.env.SSH_USER = "deploy";
+        process.env[variable] = "22";
+
+        expect(() => loadHostProfile()).toThrow(new RegExp(`${variable} is set, so SSH_JUMP_HOST is required`));
+    });
+
+    it("rejects a non-integer jump port", () => {
+        process.env.SSH_HOST = "10.0.0.5";
+        process.env.SSH_USER = "deploy";
+        process.env.SSH_JUMP_HOST = "bastion";
+        process.env.SSH_JUMP_PORT = "ssh";
+
+        expect(() => loadHostProfile()).toThrow(/SSH_JUMP_PORT must be a positive integer/);
+    });
+});
+
 describe("toHostSummary", () => {
+    it("reports the route without the proxy command text or any jump secret", () => {
+        process.env.SSH_HOST = "10.0.16.12";
+        process.env.SSH_USER = "ubuntu";
+        process.env.SSH_PROXY_COMMAND = "cloudflared access ssh --hostname %h --service-token-secret TOKEN-SENTINEL-3318";
+        process.env.SSH_JUMP_HOST = "dev-ak-ssh";
+        process.env.SSH_JUMP_PASSWORD = "JUMP-PASSWORD-SENTINEL-7702";
+
+        const summary = toHostSummary(loadHostProfile()!);
+
+        expect(summary.viaProxyCommand).toBe(true);
+        expect(summary.jump).toEqual({ host: "dev-ak-ssh", port: 22, username: "ubuntu" });
+
+        const serialized = JSON.stringify(summary);
+        expect(serialized).not.toContain("TOKEN-SENTINEL-3318");
+        expect(serialized).not.toContain("JUMP-PASSWORD-SENTINEL-7702");
+    });
+
     it.each([
         ["privateKey", { SSH_KEY: "~/.ssh/id_ed25519", SSH_PASSPHRASE: "PASSPHRASE-SENTINEL-9271" }],
         ["password", { SSH_PASSWORD: "PASSWORD-SENTINEL-4460" }],

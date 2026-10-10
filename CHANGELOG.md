@@ -2,6 +2,42 @@
 
 All notable changes to `@akms/mcp-ssh`. Dates are `YYYY-MM-DD`.
 
+## 0.1.0 — 2026-10-11
+
+### Added
+
+- **`akms-mcp-ssh config`** — an interactive manager for the hosts registered in an MCP
+  client's config: list, add, edit, remove, check, print, switch client. It asks plain
+  questions instead of `SSH_*` names, tests the connection, offers to pin the host key, and
+  writes the entry. Targets Claude Code (user scope, through `claude mcp`), Codex
+  (`~/.codex/config.toml`), Claude Desktop and Cursor. `--target <client>` picks one.
+- **Jump host** — `SSH_JUMP_HOST` (with `SSH_JUMP_PORT` / `SSH_JUMP_USER` / `SSH_JUMP_KEY`
+  / `SSH_JUMP_PASSPHRASE` / `SSH_JUMP_PASSWORD` / `SSH_JUMP_HOST_KEY`) connects to a
+  bastion first and reaches the target over a forwarded TCP channel, as `ssh -J` does.
+  User and key default to the target's.
+- **Proxy command** — `SSH_PROXY_COMMAND` runs a command and speaks SSH over its
+  stdin/stdout, as OpenSSH's `ProxyCommand` does; `%h` / `%p` / `%r` expand to the first
+  hop. It carries the jump host when both are set, so "cloudflared to the bastion, then
+  forward to the target" is one entry.
+- A `SSH_JUMP_*` variable set without `SSH_JUMP_HOST` aborts startup, like every other
+  half-formed value.
+- `ssh_list_hosts` shows the route; `--check` prints it along with the jump host's key
+  fingerprint.
+
+### Changed
+
+- `--check` now lets warnings and errors through instead of silencing the log entirely,
+  so a missing key file or the proxy command's stderr (a `cloudflared` login prompt) is
+  visible where the operator is looking. An explicit `SSH_MCP_LOG_LEVEL` still wins.
+
+### Library API
+
+- `SshHostProfile` gains `proxyCommand` and `jump` (`SshJumpProfile`); `SshHostSummary`
+  gains `viaProxyCommand` and `jump`.
+- `SshConnection.jumpHostKeyFingerprint`.
+- `loadHostProfile(env?)` reads from the given record instead of `process.env` when one
+  is passed.
+
 ## 0.0.3 — 2026-09-28
 
 - `package.json` declares `repository`, `homepage` and `bugs` pointing at
