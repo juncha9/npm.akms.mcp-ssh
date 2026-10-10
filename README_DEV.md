@@ -116,6 +116,7 @@ The connection check feeds the entry about to be written through `loadHostProfil
 | `manage-entry.test.ts` | `config` answers ⇄ entry, carried variables, the `loadHostProfile(env)` contract |
 | `manage-toml.test.ts` | Codex TOML: append, replace keeping hand-added keys, remove, CRLF |
 | `manage-command.test.ts` | **The `config` UI end to end** — scripted stdin, a live `ssh2.Server`, a temp JSON config |
+| `manage-prompter.test.ts` | Arrow-key lists and secret input on a simulated TTY; the numbered fallback off one |
 | `manage-cli-shim.test.ts` | Windows only — a JSON payload through npm's `.cmd` shim template, byte for byte |
 
 Two integration styles matter here:

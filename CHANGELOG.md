@@ -2,6 +2,29 @@
 
 All notable changes to `@akms/mcp-ssh`. Dates are `YYYY-MM-DD`.
 
+## 0.1.2 — 2026-10-11
+
+### Changed
+
+- **Adding or editing a host opens a settings form** instead of a sequence of questions.
+  Every setting is listed with its value; pick one to change it, in any order, as often as
+  needed. The cursor then moves to the next setting, so Enter down the list still fills the
+  form top to bottom. Settings a choice brings with it (the private key, the jump host) appear
+  under it once chosen, empty required settings are marked, and Save moves to the first
+  missing one. Test the connection and Save sit below the settings; Save offers a test when
+  the values changed since the last one. On a terminal the form redraws in place.
+
+## 0.1.1 — 2026-10-11
+
+### Changed
+
+- **`config` menus are arrow-key lists.** Options are picked with ↑/↓ and Enter instead of
+  typing a keyword (`claude-code`, `password`, a menu letter). The hosts are the main menu:
+  pick one to edit, check, print or remove it. The private key is chosen from the keys found
+  in `~/.ssh`, and the route is one choice (directly / jump host / proxy command / both)
+  instead of two yes/no questions. Answered prompts collapse to one `✔ question · answer`
+  line. Without a terminal (a pipe, Git Bash's mintty) the lists are numbered instead.
+
 ## 0.1.0 — 2026-10-11
 
 ### Added

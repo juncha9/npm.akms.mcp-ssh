@@ -23,13 +23,18 @@ npx -y @akms/mcp-ssh config --target codex   # claude-code | codex | claude-desk
 ```
 
 ```
-Claude Code (user scope) — /home/me/.claude.json
+Claude Code (user scope)  /home/me/.claude.json
 
-  #  Server    Endpoint            Auth  Notes
-  1  ssh-prod  deploy@10.0.0.5:22  key   readonly, pinned
-
-  a) add   e) edit   r) remove   c) check   p) print   t) switch client   q) quit
+? 1 SSH host — pick it to manage it
+❯ ssh-prod  deploy@10.0.0.5:22  key · readonly, pinned
+  ────────────────────────
+  Add a host
+  Switch client  also found: Codex CLI
+  Quit
+↑↓ move · enter select · esc back
 ```
+
+The hosts are the menu: pick one to edit, check, print or remove it. Adding or editing a host opens a settings form — every setting listed with its value, picked and changed in any order, with **Test the connection** and **Save** below. Choices are picked with the arrow keys — the private key from the keys found in `~/.ssh`, the route as "directly / through a jump host / through a proxy command". Where the terminal cannot send arrow keys (a pipe, Git Bash's mintty), the same lists are numbered and answered by number.
 
 | Client | Config file | How it is written |
 |---|---|---|
@@ -38,7 +43,7 @@ Claude Code (user scope) — /home/me/.claude.json
 | Claude Desktop | `claude_desktop_config.json` | `mcpServers.<name>` is set, every other key kept |
 | Cursor | `~/.cursor/mcp.json` | same |
 
-Only entries that launch this package are listed or touched. An edit keeps every `SSH_*` variable the wizard does not ask about (timeouts, deny patterns, `SSH_CWD`, …). `p` prints an entry as JSON, as a Codex TOML table and as a `claude mcp add-json` line, for when pasting is easier. On Windows the entry launches through `cmd /c npx`, the form Claude Code expects for npx servers there.
+Only entries that launch this package are listed or touched. An edit keeps every `SSH_*` variable the wizard does not ask about (timeouts, deny patterns, `SSH_CWD`, …). **Print** shows an entry as JSON, as a Codex TOML table and as a `claude mcp add-json` line, for when pasting is easier. On Windows the entry launches through `cmd /c npx`, the form Claude Code expects for npx servers there.
 
 **Or by hand — one server entry per host** — plain `SSH_*` variables, no config file, no JSON inside JSON. Claude Code reads `.mcp.json` in the project or `~/.claude.json` globally; Claude Desktop takes the same block inside `claude_desktop_config.json`:
 

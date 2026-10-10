@@ -123,23 +123,20 @@ function seedHost(name: string, env: Record<string, string>): void {
 }
 
 describe("config — adding a host", () => {
-    it("asks plain questions, checks the connection, pins the key and writes the entry", async () => {
+    it("fills the settings form, checks the connection, pins the key and writes the entry", async () => {
         const { exitCode, screen } = await runScript([
-            "a",                       // add
-            "127.0.0.1",               // host
-            String(serverPort),        // port
-            "tester",                  // user
-            "",                        // server name → ssh-127-0-0-1
-            "password",                // auth
-            "secret-pw",               // password
-            "",                        // jump host? no
-            "",                        // proxy command? no
-            "Test box",                // description
-            "y",                       // read-only
-            "/var/log,/opt/app",       // allowed paths
-            "",                        // test now? yes
-            "",                        // pin the host key? yes
-            "",                        // write it? yes
+            "a",                                // main menu → add
+            "host", "127.0.0.1",                // pick a setting, then its value
+            "port", String(serverPort),
+            "user", "tester",
+            "auth", "password", "secret-pw",    // a switch to password asks for it right away
+            "description", "Test box",
+            "readonly",                         // a toggle — no value to type
+            "paths", "/var/log,/opt/app",
+            "save",
+            "",                                 // test before saving? yes
+            "",                                 // pin this host key? yes
+            "",                                 // write it? yes
             "q",
         ]);
 
@@ -161,11 +158,64 @@ describe("config — adding a host", () => {
         expect(document.mcpServers.postgres).toEqual(SEED_DOCUMENT.mcpServers.postgres);
     });
 
+    it("lists every setting with its value, required ones marked", async () => {
+        const { screen } = await runScript(["a", "host", "10.0.0.9", "cancel", "y", "q"]);
+
+        expect(screen).toMatch(/Host {13}\(required\)/);
+        expect(screen).toMatch(/Host {13}10\.0\.0\.9/);
+        expect(screen).toMatch(/Server name {6}ssh-10-0-0-9/);
+        expect(screen).toMatch(/Port {13}22/);
+        expect(screen).toMatch(/Read-only {8}no/);
+        expect(screen).toMatch(/Route {12}Directly/);
+    });
+
+    it("refuses to save while a required setting is empty, and moves to it", async () => {
+        const { screen } = await runScript(["a", "save", "cancel", "q"]);
+
+        expect(screen).toContain("Fill in Host, User");
+        expect(readDocument().mcpServers).toEqual(SEED_DOCUMENT.mcpServers);
+    });
+
+    it("shows the settings a route needs only once that route is chosen", async () => {
+        await runScript([
+            "a",
+            "host", "10.0.16.12",
+            "user", "ubuntu",
+            "auth", "agent",
+            "route", "jump", "bastion.example.com",   // choosing the route asks for the jump host
+            "save",
+            "n",                                      // test before saving? no
+            "",                                       // write it? yes
+            "q",
+        ]);
+
+        expect(readDocument().mcpServers["ssh-10-0-16-12"].env).toEqual({
+            SSH_HOST: "10.0.16.12",
+            SSH_USER: "ubuntu",
+            SSH_JUMP_HOST: "bastion.example.com",
+        });
+    });
+
+    it("asks before discarding changes, and leaves an untouched form at once", async () => {
+        const { screen } = await runScript([
+            "a", "host", "10.0.0.9",
+            "cancel", "n",                            // discard? no → back in the form
+            "cancel", "y",                            // discard? yes
+            "q",
+        ]);
+
+        expect(screen.match(/Discard the changes\?/g)?.length).toBe(2);
+        expect(screen).toContain("nothing was written");
+        expect(readDocument().mcpServers).toEqual(SEED_DOCUMENT.mcpServers);
+    });
+
     it("never shows the password in the preview", async () => {
         const { screen } = await runScript([
-            "a", "127.0.0.1", String(serverPort), "tester", "box", "password", "secret-pw",
-            "", "", "", "", "",
-            "n",   // test now? no
+            "a",
+            "host", "127.0.0.1", "port", String(serverPort), "user", "tester", "name", "box",
+            "auth", "password", "secret-pw",
+            "save",
+            "n",   // test before saving? no
             "n",   // write it? no
         ]);
 
@@ -174,12 +224,14 @@ describe("config — adding a host", () => {
         expect(readDocument().mcpServers.box).toBeUndefined();
     });
 
-    it("writes nothing when the check fails and the operator cancels", async () => {
+    it("writes nothing when the check fails and the operator discards", async () => {
         const { screen } = await runScript([
-            "a", "127.0.0.1", String(closedPort), "tester", "dead", "agent",
-            "", "", "", "", "",
-            "",    // test now? yes
-            "c",   // what now? cancel
+            "a",
+            "host", "127.0.0.1", "port", String(closedPort), "user", "tester", "name", "dead",
+            "auth", "agent",
+            "save",
+            "",          // test before saving? yes
+            "discard",   // the check failed, what now? → discard
             "q",
         ]);
 
@@ -190,9 +242,10 @@ describe("config — adding a host", () => {
 
     it("re-asks a server name that could not be part of a tool name", async () => {
         const { screen } = await runScript([
-            "a", "127.0.0.1", "22", "tester", "my.host", "ok-name", "agent",
-            "", "", "", "", "",
-            "n", "",
+            "a",
+            "host", "127.0.0.1", "user", "tester", "name", "my.host", "ok-name",
+            "auth", "agent",
+            "save", "n", "",
             "q",
         ]);
 
@@ -207,22 +260,20 @@ describe("config — managing existing hosts", () => {
 
         const { screen } = await runScript(["q"]);
 
-        expect(screen).toContain("ssh-prod  deploy@10.0.0.5:22");
-        expect(screen).toContain("readonly");
+        expect(screen).toMatch(/1\) ssh-prod {2}deploy@10\.0\.0\.5:22 +agent · readonly/);
         expect(screen).toContain("1 other MCP server(s)");
-        expect(screen).not.toMatch(/\d\s+postgres/);
+        expect(screen).not.toMatch(/\d\) postgres/);
     });
 
     it("renames on edit: the new name is written and the old one removed", async () => {
         seedHost("ssh-old", { SSH_HOST: "10.0.0.5", SSH_USER: "deploy", SSH_HOST_KEY: "SHA256:kept", SSH_CWD: "/opt/app" });
 
         await runScript([
-            "e",                       // edit (the only host, so no picking)
-            "", "", "",                // host, port, user unchanged
-            "ssh-new",                 // new name
-            "",                        // auth: agent, unchanged
-            "", "", "", "", "",        // route, description, policy unchanged
-            "n",                       // test now? no
+            "ssh-old",                 // pick the host by name
+            "e",                       // → edit: its settings open
+            "name", "ssh-new",         // change just the name
+            "save",
+            "n",                       // test before saving? no
             "",                        // write it? yes
             "q",
         ]);
@@ -240,7 +291,7 @@ describe("config — managing existing hosts", () => {
     it("pins an unpinned host from the check, adding just that one variable", async () => {
         seedHost("ssh-test", { SSH_HOST: "127.0.0.1", SSH_PORT: String(serverPort), SSH_USER: "tester", SSH_PASSWORD: "pw" });
 
-        await runScript(["c", "", "q"]);
+        await runScript(["1", "c", "", "q"]);   // host 1 → check → pin? yes
 
         const entry = readDocument().mcpServers["ssh-test"];
         expect(entry.command).toBe("npx");
@@ -256,7 +307,7 @@ describe("config — managing existing hosts", () => {
     it("prints the entry in every form, ready to paste", async () => {
         seedHost("ssh-prod", { SSH_HOST: "10.0.0.5", SSH_USER: "deploy", SSH_PASSWORD: "pw" });
 
-        const { screen } = await runScript(["p", "q"]);
+        const { screen } = await runScript(["1", "p", "q"]);   // host 1 → print
 
         expect(screen).toContain("\"ssh-prod\": {");
         expect(screen).toContain("[mcp_servers.ssh-prod.env]");
@@ -268,7 +319,11 @@ describe("config — managing existing hosts", () => {
         seedHost("ssh-a", { SSH_HOST: "10.0.0.5", SSH_USER: "deploy" });
         seedHost("ssh-b", { SSH_HOST: "10.0.0.6", SSH_USER: "deploy" });
 
-        await runScript(["r", "2", "n", "r", "ssh-a", "y", "q"]);
+        await runScript([
+            "2", "r", "n",             // ssh-b → remove → no
+            "ssh-a", "r", "y",         // ssh-a → remove → yes
+            "q",
+        ]);
 
         const servers = readDocument().mcpServers;
         expect(servers["ssh-a"]).toBeUndefined();

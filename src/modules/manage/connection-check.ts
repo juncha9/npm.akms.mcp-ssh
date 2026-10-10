@@ -2,6 +2,7 @@ import type { Writable } from "node:stream";
 
 import { SINGLE_HOST_ENV } from "@/_defs";
 import type { SshHostProfile } from "@/_types";
+import { loadHostProfile } from "@/modules/config";
 import { SshConnection } from "@/modules/ssh";
 
 export interface ConnectionCheckResult {
@@ -9,6 +10,28 @@ export interface ConnectionCheckResult {
     /** Fingerprints the server presented, pinned or not; null when the handshake never got there. */
     hostKeyFingerprint: string | null;
     jumpHostKeyFingerprint: string | null;
+}
+
+/**
+ * Builds a profile from an entry's env the way the server will at startup — so a value the
+ * server would reject is caught here, not when the agent first calls a tool.
+ */
+export function profileFromEnv(output: Writable, env: Record<string, string>): SshHostProfile | null {
+    try {
+        const profile = loadHostProfile(env);
+        if (profile == null) {
+            output.write("  The entry has no host.\n");
+        }
+        return profile;
+    }
+    catch (ex) {
+        let detail = String(ex);
+        if (ex instanceof Error) {
+            detail = ex.message;
+        }
+        output.write(`  The server would refuse to start with this entry: ${detail}\n`);
+        return null;
+    }
 }
 
 /**
