@@ -1,6 +1,6 @@
-# `config` command — design
+# `setup` command — design
 
-Status: **implemented**, 2026-10-11 (proposed 2026-10-10 as `setup`).
+Status: **implemented**, 2026-10-11. Proposed 2026-10-10 as `setup`, shipped in 0.1.0 – 0.1.2 as `config`, named `setup` again from 0.1.3 (`config` stays as a hidden alias).
 
 ## 🎯 Problem
 
@@ -14,7 +14,7 @@ own JSON files.
 
 | Question | Decision |
 |---|---|
-| Entry point | `akms-mcp-ssh config` — a management UI (list / add / edit / remove / check / print / switch client), not a one-shot wizard |
+| Entry point | `akms-mcp-ssh setup` — a management UI (list / add / edit / remove / check / print / switch client), not a one-shot wizard |
 | Claude Code scope | **user only** (`~/.claude.json`). Project `.mcp.json` dropped — an SSH host belongs to a person, not a repo |
 | Paste-ready output | yes — Print shows JSON, a Codex TOML table and a `claude mcp add-json` line |
 | Flags | `--target <client>` only. No `--host` / `--user` flags: they would bring back the names the wizard hides |
@@ -23,7 +23,7 @@ own JSON files.
 ## 🧭 Flow
 
 ```
-config [--target <client>]
+setup [--target <client>]
  └─ loop: the hosts in the current client's file ARE the menu
      ├─ <host>          → Edit / Check the connection / Print the entry / Remove / Back
      │    ├─ Edit       the settings form, pre-filled → preview → write;
@@ -74,12 +74,24 @@ wrong answer meant walking every question again). Every setting is a row with it
 - Save settles a name clash, then offers a test if the values changed since the last
   successful one. A failed test offers Back to the settings / Save anyway / Discard.
 - Cancel or Esc leaves at once from an untouched form, and asks first from a changed one.
+- **Esc inside anything a row opened goes back to the form with that setting unchanged.**
+  Every prompt throws `PromptBackError` on Esc; the form snapshots its state before acting on
+  a pick and restores it in the catch, so Esc at a follow-up question (the jump host after
+  choosing a jump route) also undoes the choice that opened it. The cursor stays on the row.
+  Esc at the write preview reopens the form on the same values.
 - On a TTY the form redraws in place: `Prompter.transient` makes answered prompts leave
   no line behind, since the form already shows every value.
 
 In a text field Enter keeps the value shown and `-` clears an optional one.
 
-**Two input modes.** On a TTY, a list is driven by ↑/↓ (or k/j), 1–9, Enter and Esc, and
+**Text fields run in raw mode too.** A cooked-mode read (the terminal's own line editing)
+never reports Esc — the terminal either eats it or hands the `ESC` byte over inside the value,
+which is how a host once ended up stored as `\u001b`. So on a TTY a text field is a small
+line editor of its own (insert, Backspace/Delete, ←/→, Home/End, Ctrl+U), and Esc is a key
+the program sees. Off a TTY, a line consisting of just `ESC` stands for the Esc key, so the
+scripted tests can press it.
+
+**Two input modes.** On a TTY, a list is driven by ↑/↓, 1–9, Enter and Esc, and
 every answered prompt collapses to one `✔ question · answer` line. Off a TTY — a pipe, the
 tests, Git Bash's mintty without winpty — the same list is numbered and answered by number,
 key or label. Both come from one `Prompter.select`, so the scripted tests drive the same
@@ -137,7 +149,7 @@ does not parse is never written; the UI says so and offers only switch / quit.
 
 ```
 src/modules/manage/
-├── index.ts             runConfigCommand() — the host menu, check/print/remove, preview + write
+├── index.ts             runSetupCommand() — the host menu, check/print/remove, preview + write
 ├── host-form.ts         the settings form for add / edit; key discovery; test + pin
 ├── prompter.ts          select / text / secret prompts over any stream pair
 ├── entry.ts             answers ⇄ entry, isOurEntry, list summary

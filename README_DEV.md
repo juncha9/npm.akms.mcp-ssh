@@ -26,11 +26,11 @@ src/
 ├── modules/
 │   ├── config/  SSH_* readers, profile builder, credential-free summary
 │   ├── guard/   command + path inspection, GuardRejectionError
-│   ├── manage/  the `config` command: prompts, wizard, per-client config writers
+│   ├── manage/  the `setup` command: prompts, settings form, per-client config writers
 │   ├── ssh/     ssh2 connection, session manager, SFTP ops
 │   └── tools/   MCP tool registration, output formatting
 ├── server.ts    createSshMcpServer()
-├── cli.ts       bin entry (stdio transport, --check, config)
+├── cli.ts       bin entry (stdio transport, --check, setup)
 └── index.ts     library entry
 ```
 
@@ -91,11 +91,11 @@ A dropped connection is reported rather than re-dialled. Reconnecting hands back
 
 The proxy command runs through the shell, as OpenSSH's `ProxyCommand` does. On Windows that puts `cmd.exe` between us and the real process, so the transport kills the process tree (`taskkill /T`) rather than just the shell — otherwise `cloudflared` would outlive the connection it carried.
 
-### `config` writes through whatever owns the file
+### `setup` writes through whatever owns the file
 
-The `config` command edits other programs' config files, so each target is written the least invasive way available. `~/.claude.json` is Claude Code's own state file, rewritten by the running process, so writes go through `claude mcp add-json` / `remove` and the file is only read. Codex's TOML is rewritten by section with no TOML dependency: only `[mcp_servers.<name>]` and its `.env` table are rebuilt, and every other line comes back byte for byte. Plain `mcpServers` JSON files are merged one key at a time, and a file that does not parse is never written.
+The `setup` command edits other programs' config files, so each target is written the least invasive way available. `~/.claude.json` is Claude Code's own state file, rewritten by the running process, so writes go through `claude mcp add-json` / `remove` and the file is only read. Codex's TOML is rewritten by section with no TOML dependency: only `[mcp_servers.<name>]` and its `.env` table are rebuilt, and every other line comes back byte for byte. Plain `mcpServers` JSON files are merged one key at a time, and a file that does not parse is never written.
 
-The connection check feeds the entry about to be written through `loadHostProfile(env)` and the same report `--check` prints. A value the server would reject is therefore caught before it is written, and a host that passes setup passes `--check`. Full rules and rationale are in [docs/design/config-command.md](docs/design/config-command.md).
+The connection check feeds the entry about to be written through `loadHostProfile(env)` and the same report `--check` prints. A value the server would reject is therefore caught before it is written, and a host that passes setup passes `--check`. Full rules and rationale are in [docs/design/setup-command.md](docs/design/setup-command.md).
 
 ## 🧪 Testing
 
@@ -113,9 +113,9 @@ The connection check feeds the entry about to be written through `loadHostProfil
 | `sftp-integration.test.ts` | **Live SFTP subsystem** — listings, partial reads, transfers |
 | `route-integration.test.ts` | **Live jump host + proxy command** — a bastion `ssh2.Server` that forwards `direct-tcpip`, and `tests/_fixtures/tcp-relay.cjs` as a cross-platform `nc %h %p` |
 | `tool-integration.test.ts` | **MCP client ↔ server** over an in-memory transport |
-| `manage-entry.test.ts` | `config` answers ⇄ entry, carried variables, the `loadHostProfile(env)` contract |
+| `manage-entry.test.ts` | `setup` answers ⇄ entry, carried variables, the `loadHostProfile(env)` contract |
 | `manage-toml.test.ts` | Codex TOML: append, replace keeping hand-added keys, remove, CRLF |
-| `manage-command.test.ts` | **The `config` UI end to end** — scripted stdin, a live `ssh2.Server`, a temp JSON config |
+| `manage-command.test.ts` | **The `setup` UI end to end** — scripted stdin, a live `ssh2.Server`, a temp JSON config |
 | `manage-prompter.test.ts` | Arrow-key lists and secret input on a simulated TTY; the numbered fallback off one |
 | `manage-cli-shim.test.ts` | Windows only — a JSON payload through npm's `.cmd` shim template, byte for byte |
 

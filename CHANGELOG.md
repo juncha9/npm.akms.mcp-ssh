@@ -2,6 +2,24 @@
 
 All notable changes to `@akms/mcp-ssh`. Dates are `YYYY-MM-DD`.
 
+## 0.1.3 — 2026-10-11
+
+### Changed
+
+- **The host manager is `akms-mcp-ssh setup`.** `config` still opens it, so the name used
+  in 0.1.0 – 0.1.2 keeps working, but it is no longer listed in `--help`.
+
+### Fixed
+
+- **Esc goes back one level everywhere in `setup`.** Inside the settings form, Esc in a
+  choice list (authentication, route, private key), a text field or a secret returns to the
+  form with the setting unchanged — including the follow-up a choice opened, so Esc at the
+  jump-host question also restores the route. Esc at the "Write it?" preview reopens the form
+  on the same values. Before, a list opened from the form ignored Esc, and a text field never
+  saw it: on macOS / Linux the terminal handed the `ESC` byte over as part of the value.
+- Text fields on a terminal are now a small line editor in raw mode (←/→, Home/End,
+  Backspace/Delete, Ctrl+U), which is what makes Esc visible there.
+
 ## 0.1.2 — 2026-10-11
 
 ### Changed

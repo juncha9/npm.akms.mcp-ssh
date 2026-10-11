@@ -9,6 +9,7 @@ import type { HostAuthMethod, HostSetupAnswers } from "@/_types";
 
 import { profileFromEnv, runConnectionCheck } from "./connection-check";
 import { SERVER_NAME_PATTERN, answersToEntry } from "./entry";
+import { PromptBackError } from "./prompter";
 import type { Prompter, SelectChoice, SelectItem } from "./prompter";
 
 /** Listed first when present, in this order — the keys `ssh` itself tries first. */
@@ -305,6 +306,28 @@ function finalizeAnswers(state: FormState): HostSetupAnswers {
 
 function snapshotOf(state: FormState): string {
     return JSON.stringify(finalizeAnswers(state));
+}
+
+/** A copy deep enough to restore from: the answers' arrays and records are copied, not shared. */
+function cloneState(state: FormState): FormState {
+    return {
+        ...state,
+        answers: {
+            ...state.answers,
+            allowedPaths: [...state.answers.allowedPaths],
+            extraEnv: { ...state.answers.extraEnv },
+        },
+    };
+}
+
+/** Puts `state` back to `snapshot` in place — the loop holds `state` by reference. */
+function restoreState(state: FormState, snapshot: FormState): void {
+    const restored = cloneState(snapshot);
+    state.answers = restored.answers;
+    state.route = restored.route;
+    state.nameTouched = restored.nameTouched;
+    state.lastTest = restored.lastTest;
+    state.testedSnapshot = restored.testedSnapshot;
 }
 
 /** Settings the entry cannot do without that are still empty, in display order. */
@@ -809,85 +832,100 @@ export async function runHostForm(prompter: Prompter, output: Writable, options:
         for (;;) {
             const picked = await prompter.select(title, buildRows(state, destination), { defaultValue: cursor, cancelValue: "cancel" });
 
-            // (4) Cancel
-            if (picked === "cancel") {
-                if (snapshotOf(state) !== initialSnapshot) {
-                    const discard = await prompter.askYesNo("Discard the changes?", false);
-                    if (discard == false) {
+            // Esc inside anything the pick opened — a field editor, a confirmation, a
+            // follow-up question — comes back here as PromptBackError. The form is restored to
+            // what it held before the pick, and the cursor stays on the row that was picked.
+            const before = cloneState(state);
+
+            try {
+                // (4) Cancel
+                if (picked === "cancel") {
+                    if (snapshotOf(state) !== initialSnapshot) {
+                        const discard = await prompter.askYesNo("Discard the changes?", false);
+                        if (discard == false) {
+                            continue;
+                        }
+                    }
+                    return null;
+                }
+
+                const missing = missingFields(state);
+
+                // (2) Test
+                if (picked === "test") {
+                    if (missing.length > 0) {
+                        output.write(`  Fill in ${missing.map((field) => FIELD_NAMES[field]).join(", ")} first.\n`);
+                        cursor = missing[0];
                         continue;
                     }
-                }
-                return null;
-            }
 
-            const missing = missingFields(state);
-
-            // (2) Test
-            if (picked === "test") {
-                if (missing.length > 0) {
-                    output.write(`  Fill in ${missing.map((field) => FIELD_NAMES[field]).join(", ")} first.\n`);
-                    cursor = missing[0];
+                    const connected = await testConnection(prompter, output, state);
+                    cursor = "test";
+                    if (connected == true) {
+                        cursor = "save";
+                    }
                     continue;
                 }
 
-                const connected = await testConnection(prompter, output, state);
-                cursor = "test";
-                if (connected == true) {
-                    cursor = "save";
-                }
-                continue;
-            }
-
-            // (3) Save
-            if (picked === "save") {
-                if (missing.length > 0) {
-                    output.write(`  Fill in ${missing.map((field) => FIELD_NAMES[field]).join(", ")} first.\n`);
-                    cursor = missing[0];
-                    continue;
-                }
-
-                const name = state.answers.name;
-                if (name !== originalName && takenNames.includes(name) == true) {
-                    const replace = await prompter.askYesNo(`"${name}" already exists in this file. Replace it?`, false);
-                    if (replace == false) {
-                        cursor = "name";
+                // (3) Save
+                if (picked === "save") {
+                    if (missing.length > 0) {
+                        output.write(`  Fill in ${missing.map((field) => FIELD_NAMES[field]).join(", ")} first.\n`);
+                        cursor = missing[0];
                         continue;
                     }
-                }
 
-                if (snapshotOf(state) !== state.testedSnapshot) {
-                    const testFirst = await prompter.askYesNo("Test the connection before saving?", true);
-                    if (testFirst == true) {
-                        const connected = await testConnection(prompter, output, state);
-                        if (connected == false) {
-                            const next = await prompter.select(
-                                "The check failed. What now?",
-                                [
-                                    { value: "back", key: "back", label: "Back to the settings" },
-                                    { value: "save", key: "save", label: "Save anyway", hint: "the host may be unreachable from here" },
-                                    { value: "discard", key: "discard", label: "Discard", hint: "nothing is written" },
-                                ],
-                                { defaultValue: "back", cancelValue: "back" },
-                            );
+                    const name = state.answers.name;
+                    if (name !== originalName && takenNames.includes(name) == true) {
+                        const replace = await prompter.askYesNo(`"${name}" already exists in this file. Replace it?`, false);
+                        if (replace == false) {
+                            cursor = "name";
+                            continue;
+                        }
+                    }
 
-                            if (next === "discard") {
-                                return null;
-                            }
+                    if (snapshotOf(state) !== state.testedSnapshot) {
+                        const testFirst = await prompter.askYesNo("Test the connection before saving?", true);
+                        if (testFirst == true) {
+                            const connected = await testConnection(prompter, output, state);
+                            if (connected == false) {
+                                const next = await prompter.select(
+                                    "The check failed. What now?",
+                                    [
+                                        { value: "back", key: "back", label: "Back to the settings" },
+                                        { value: "save", key: "save", label: "Save anyway", hint: "the host may be unreachable from here" },
+                                        { value: "discard", key: "discard", label: "Discard", hint: "nothing is written" },
+                                    ],
+                                    { defaultValue: "back", cancelValue: "back" },
+                                );
 
-                            if (next === "back") {
-                                cursor = "test";
-                                continue;
+                                if (next === "discard") {
+                                    return null;
+                                }
+
+                                if (next === "back") {
+                                    cursor = "test";
+                                    continue;
+                                }
                             }
                         }
                     }
+
+                    return finalizeAnswers(state);
                 }
 
-                return finalizeAnswers(state);
+                // (1) A setting
+                await editField(prompter, output, state, picked);
+                cursor = nextCursor(state, destination, picked);
             }
+            catch (ex) {
+                if (ex instanceof PromptBackError == false) {
+                    throw ex;
+                }
 
-            // (1) A setting
-            await editField(prompter, output, state, picked);
-            cursor = nextCursor(state, destination, picked);
+                restoreState(state, before);
+                cursor = picked;
+            }
         }
     }
     finally {

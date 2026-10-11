@@ -126,7 +126,7 @@ function compileDenyPatterns(sources: string[]): RegExp[] {
  *  5) Route: proxy command and / or jump host
  *
  * @param env - Where the `SSH_*` variables are read from. Defaults to the process
- *              environment; the `config` command passes the entry it is about to write.
+ *              environment; the `setup` command passes the entry it is about to write.
  * @throws {Error} If `SSH_HOST` is set without `SSH_USER`, a `SSH_JUMP_*` variable is set
  *                 without `SSH_JUMP_HOST`, or a typed value is malformed.
  */

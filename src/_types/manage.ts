@@ -8,7 +8,7 @@ export interface McpServerEntry {
 export type HostAuthMethod = "key" | "password" | "agent";
 
 /**
- * What the `config` wizard collects for one host. `answersToEntry` turns it into `SSH_*`
+ * What the `setup` form collects for one host. `answersToEntry` turns it into `SSH_*`
  * variables and `entryToAnswers` reads an existing entry back, so an edit pre-fills.
  */
 export interface HostSetupAnswers {

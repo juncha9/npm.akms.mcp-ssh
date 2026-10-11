@@ -54,7 +54,7 @@ function describeAuth(profile: SshHostProfile): string {
 
 /**
  * Connects to the host and reports what happened — the body of `--check`, shared with the
- * `config` command so a host that passes setup passes `--check`.
+ * `setup` command so a host that passes setup passes `--check`.
  *
  * Without this the only way to find out whether the setup works is to ask an agent to try
  * something, which mixes a setup mistake up with a policy rejection.

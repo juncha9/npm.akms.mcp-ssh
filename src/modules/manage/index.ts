@@ -6,7 +6,7 @@ import type { ConfigTarget, ConfigWriteResult, HostSetupAnswers, McpServerEntry 
 import { profileFromEnv, runConnectionCheck } from "./connection-check";
 import { answersToEntry, entryToAnswers, isOurEntry, summarizeEntry } from "./entry";
 import { runHostForm } from "./host-form";
-import { PromptClosedError, Prompter, displayWidth } from "./prompter";
+import { PromptBackError, PromptClosedError, Prompter, displayWidth } from "./prompter";
 import type { SelectItem } from "./prompter";
 import { formatClaudeAddCommand, listConfigTargets, renderMcpServerTable } from "./targets";
 
@@ -24,7 +24,7 @@ const SECRET_ENV_NAMES: string[] = [
 /** Prefix of a host row's select value, so a host named like an action can't collide with it. */
 const HOST_VALUE_PREFIX = "host:";
 
-export interface ConfigCommandOptions {
+export interface SetupCommandOptions {
     input: Readable;
     output: Writable;
     /** Supported clients; tests pass their own so nothing under the real home is touched. */
@@ -94,7 +94,7 @@ async function addOrEditHost(
         existing = entryToAnswers(existingName, entries[existingName]);
     }
 
-    const answers = await runHostForm(prompter, output, {
+    let answers = await runHostForm(prompter, output, {
         existing: existing,
         takenNames: Object.keys(entries),
         destination: target.label,
@@ -104,14 +104,43 @@ async function addOrEditHost(
         return;
     }
 
-    const entry = answersToEntry(answers);
-    output.write(`\n  ${prompter.paint.dim(`This goes into ${target.location}:`)}\n\n`);
-    output.write(`${indent(formatForTarget(target, answers.name, maskSecrets(entry)))}\n\n`);
+    let entry = answersToEntry(answers);
+    for (;;) {
+        output.write(`\n  ${prompter.paint.dim(`This goes into ${target.location}:`)}\n\n`);
+        output.write(`${indent(formatForTarget(target, answers.name, maskSecrets(entry)))}\n\n`);
 
-    const confirmed = await prompter.askYesNo("Write it?", true);
-    if (confirmed == false) {
-        output.write("  Not written. Pick the host and choose Print to get the entry ready to paste.\n\n");
-        return;
+        let confirmed: boolean;
+        try {
+            confirmed = await prompter.askYesNo("Write it?", true);
+        }
+        catch (ex) {
+            if (ex instanceof PromptBackError == false) {
+                throw ex;
+            }
+
+            // Esc at the preview reopens the form on the same values, so one more change
+            // does not mean filling everything in again.
+            const revised = await runHostForm(prompter, output, {
+                existing: answers,
+                takenNames: Object.keys(entries),
+                destination: target.label,
+            });
+            if (revised == null) {
+                output.write("  Cancelled — nothing was written.\n\n");
+                return;
+            }
+
+            answers = revised;
+            entry = answersToEntry(answers);
+            continue;
+        }
+
+        if (confirmed == false) {
+            output.write("  Not written. Pick the host and choose Print to get the entry ready to paste.\n\n");
+            return;
+        }
+
+        break;
     }
 
     const written = target.writeEntry(answers.name, entry);
@@ -249,13 +278,13 @@ async function manageHost(
 }
 
 /**
- * `akms-mcp-ssh config` — an interactive manager for the SSH hosts registered in an MCP
+ * `akms-mcp-ssh setup` — an interactive manager for the SSH hosts registered in an MCP
  * client's config. The hosts themselves are the menu: pick one to edit, check, print or
  * remove it, or pick an action below them. The `SSH_*` names never have to be typed.
  *
  * @returns Process exit code.
  */
-export async function runConfigCommand(options: ConfigCommandOptions): Promise<number> {
+export async function runSetupCommand(options: SetupCommandOptions): Promise<number> {
     const { input, output } = options;
     const targets = options.targets ?? listConfigTargets();
 
@@ -369,6 +398,11 @@ export async function runConfigCommand(options: ConfigCommandOptions): Promise<n
             catch (ex) {
                 if (ex instanceof PromptClosedError) {
                     throw ex;
+                }
+                // Esc in a question the action asked (pin this key? remove?) means "no, and
+                // back to the list" — nothing to report.
+                if (ex instanceof PromptBackError) {
+                    continue;
                 }
                 output.write(`  Failed: ${errorMessage(ex)}\n\n`);
             }

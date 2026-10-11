@@ -10,7 +10,7 @@ import ssh2 from "ssh2";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { ConfigTarget, McpServerEntry } from "@/_types";
-import { runConfigCommand } from "@/modules/manage";
+import { runSetupCommand } from "@/modules/manage";
 import { createJsonFileTarget } from "@/modules/manage/targets/json-file";
 import { toHostKeyFingerprint } from "@/modules/ssh/ssh-connection";
 
@@ -108,7 +108,7 @@ async function runScript(lines: string[]): Promise<{ exitCode: number; screen: s
 
     input.end(lines.map((line) => `${line}\n`).join(""));
 
-    const exitCode = await runConfigCommand({ input: input, output: output, targets: [target] });
+    const exitCode = await runSetupCommand({ input: input, output: output, targets: [target] });
     return { exitCode: exitCode, screen: screen };
 }
 
@@ -122,7 +122,7 @@ function seedHost(name: string, env: Record<string, string>): void {
     fs.writeFileSync(configPath, JSON.stringify(document, null, 2));
 }
 
-describe("config — adding a host", () => {
+describe("setup — adding a host", () => {
     it("fills the settings form, checks the connection, pins the key and writes the entry", async () => {
         const { exitCode, screen } = await runScript([
             "a",                                // main menu → add
@@ -196,6 +196,49 @@ describe("config — adding a host", () => {
         });
     });
 
+    it("Esc inside a field editor goes back to the form with nothing changed", async () => {
+        const ESC = "\u001b";
+        const { screen } = await runScript([
+            "a",
+            "host", "10.0.0.9",
+            "auth", ESC,                       // open the auth list, leave it
+            "route", "jump", ESC,              // choose a jump route, Esc at the jump-host question
+            "user", "ab", "cancel", "n",       // keep going: still the same form
+            "host", ESC,                       // leave the host editor
+            "cancel", "y",
+            "q",
+        ]);
+
+        const lastForm = screen.slice(screen.lastIndexOf("? New host"));
+        expect(lastForm).toMatch(/Host {13}10\.0\.0\.9/);
+        expect(lastForm).toMatch(/Authentication {3}Private key file/);
+        expect(lastForm).toMatch(/Route {12}Directly/);
+        expect(lastForm).not.toContain("Jump host");
+        expect(screen).not.toContain(`Host             ${ESC}`);
+        expect(readDocument().mcpServers).toEqual(SEED_DOCUMENT.mcpServers);
+    });
+
+    it("Esc at the write preview reopens the form on the same values", async () => {
+        const ESC = "\u001b";
+        await runScript([
+            "a",
+            "host", "127.0.0.1", "user", "tester", "name", "again",
+            "auth", "agent",
+            "save", "n",                       // test before saving? no
+            ESC,                               // write it? → back to the form
+            "description", "second pass",
+            "save", "n",
+            "",                                // write it? yes
+            "q",
+        ]);
+
+        expect(readDocument().mcpServers.again.env).toEqual({
+            SSH_HOST: "127.0.0.1",
+            SSH_USER: "tester",
+            SSH_DESCRIPTION: "second pass",
+        });
+    });
+
     it("asks before discarding changes, and leaves an untouched form at once", async () => {
         const { screen } = await runScript([
             "a", "host", "10.0.0.9",
@@ -254,7 +297,7 @@ describe("config — adding a host", () => {
     });
 });
 
-describe("config — managing existing hosts", () => {
+describe("setup — managing existing hosts", () => {
     it("lists only this package's servers and counts the rest", async () => {
         seedHost("ssh-prod", { SSH_HOST: "10.0.0.5", SSH_USER: "deploy", SSH_READONLY: "true" });
 

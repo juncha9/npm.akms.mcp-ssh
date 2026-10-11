@@ -15,11 +15,11 @@ npx -y @akms/mcp-ssh --help    # or run it straight from the registry
 
 ## ⚙️ MCP client setup
 
-**Let the CLI write it.** `config` opens a small manager for the hosts registered in a client's config. It asks plain questions — host, user, key or password, jump host, read-only — tests the connection, offers to pin the host key, and writes the entry. No `SSH_*` name has to be remembered.
+**Let the CLI write it.** `setup` opens a small manager for the hosts registered in a client's config. It asks plain questions — host, user, key or password, jump host, read-only — tests the connection, offers to pin the host key, and writes the entry. No `SSH_*` name has to be remembered.
 
 ```bash
-npx -y @akms/mcp-ssh config                  # opens on the first client found on this machine
-npx -y @akms/mcp-ssh config --target codex   # claude-code | codex | claude-desktop | cursor
+npx -y @akms/mcp-ssh setup                   # opens on the first client found on this machine
+npx -y @akms/mcp-ssh setup --target codex    # claude-code | codex | claude-desktop | cursor
 ```
 
 ```
@@ -34,7 +34,7 @@ Claude Code (user scope)  /home/me/.claude.json
 ↑↓ move · enter select · esc back
 ```
 
-The hosts are the menu: pick one to edit, check, print or remove it. Adding or editing a host opens a settings form — every setting listed with its value, picked and changed in any order, with **Test the connection** and **Save** below. Choices are picked with the arrow keys — the private key from the keys found in `~/.ssh`, the route as "directly / through a jump host / through a proxy command". Where the terminal cannot send arrow keys (a pipe, Git Bash's mintty), the same lists are numbered and answered by number.
+The hosts are the menu: pick one to edit, check, print or remove it. Adding or editing a host opens a settings form — every setting listed with its value, picked and changed in any order, with **Test the connection** and **Save** below. Choices are picked with the arrow keys, and Esc always goes back one level — the private key from the keys found in `~/.ssh`, the route as "directly / through a jump host / through a proxy command". Where the terminal cannot send arrow keys (a pipe, Git Bash's mintty), the same lists are numbered and answered by number.
 
 | Client | Config file | How it is written |
 |---|---|---|

@@ -2,12 +2,24 @@ import type { Readable, Writable } from "node:stream";
 
 /**
  * Input ended before a prompt was answered — Ctrl+D, Ctrl+C, or a piped script running out.
- * The `config` loop treats it as leaving, not as a failure.
+ * The `setup` loop treats it as leaving, not as a failure.
  */
 export class PromptClosedError extends Error {
     constructor() {
         super("input closed before the prompt was answered");
         this.name = "PromptClosedError";
+    }
+}
+
+/**
+ * The user pressed Esc: leave this prompt without answering and go back one level. Every
+ * prompt throws it, so a caller that opened a sub-screen (a field editor, a confirmation)
+ * returns to where it was with nothing changed. Off a TTY a line of just `ESC` means the same.
+ */
+export class PromptBackError extends Error {
+    constructor() {
+        super("prompt left with esc");
+        this.name = "PromptBackError";
     }
 }
 
@@ -30,7 +42,7 @@ export type SelectItem<T extends string> = SelectChoice<T> | SelectSeparator;
 export interface SelectOptions<T extends string> {
     /** Where the cursor starts, and what Enter picks on an empty line-mode answer. */
     defaultValue?: T;
-    /** Returned on Esc. Without it Esc does nothing — the question has to be answered. */
+    /** Returned on Esc instead of throwing `PromptBackError` — for a menu that has a "back" row of its own. */
     cancelValue?: T;
 }
 
@@ -47,14 +59,19 @@ interface TtyOutput {
 }
 
 const ESC = "\u001b";
-const KEY_UP = [`${ESC}[A`, `${ESC}OA`, "k"];
-const KEY_DOWN = [`${ESC}[B`, `${ESC}OB`, "j"];
-const KEY_HOME = [`${ESC}[H`, `${ESC}OH`, `${ESC}[1~`];
-const KEY_END = [`${ESC}[F`, `${ESC}OF`, `${ESC}[4~`];
+const KEY_UP = [`${ESC}[A`, `${ESC}OA`];
+const KEY_DOWN = [`${ESC}[B`, `${ESC}OB`];
+const KEY_RIGHT = [`${ESC}[C`, `${ESC}OC`];
+const KEY_LEFT = [`${ESC}[D`, `${ESC}OD`];
+const KEY_HOME = [`${ESC}[H`, `${ESC}OH`, `${ESC}[1~`, "\u0001"];
+const KEY_END = [`${ESC}[F`, `${ESC}OF`, `${ESC}[4~`, "\u0005"];
+const KEY_DELETE = [`${ESC}[3~`];
 const KEY_ENTER = ["\r", "\n"];
 const KEY_BACKSPACE = ["\u007f", "\b"];
 const KEY_CTRL_C = "\u0003";
 const KEY_CTRL_D = "\u0004";
+/** Ctrl+U — clear the line, as in every shell. */
+const KEY_CLEAR_LINE = "\u0015";
 
 /** Splits a raw-mode chunk into keys: one character, or one whole escape sequence. */
 function splitKeys(chunk: string): string[] {
@@ -80,6 +97,16 @@ function splitKeys(chunk: string): string[] {
     }
 
     return keys;
+}
+
+/** True for a key that is text to insert, not a control character or an escape sequence. */
+function isPrintableKey(key: string): boolean {
+    if (key.startsWith(ESC) == true) {
+        return false;
+    }
+
+    const codePoint = key.codePointAt(0) ?? 0;
+    return codePoint >= 0x20 && codePoint !== 0x7f;
 }
 
 /** Terminal columns a code point occupies — two for CJK, Hangul and the wide emoji blocks. */
@@ -203,16 +230,23 @@ interface LinePart {
     paint?: (text: string) => string;
 }
 
+/** What a raw-mode text read reports back. */
+type LineReadResult = { kind: "entered"; text: string } | { kind: "back" };
+
 /**
  * Prompts over any stream pair, with one `data` listener owning the input.
  *
- * On a TTY, choices are an arrow-key list and every answered prompt collapses to a single
- * `✔ question · answer` line, so the transcript reads as a summary of what was set. Off a
- * TTY — a pipe, a test, Git Bash's mintty without winpty — every prompt is a plain line read
- * and a list is numbered, which is what lets the whole UI run over scripted stdin.
+ * On a TTY every prompt runs in raw mode — a select is an arrow-key list, a text field is a
+ * small line editor — so Esc is seen everywhere and means "back one level"
+ * (`PromptBackError`). Each answered prompt collapses to a single `✔ question · answer`
+ * line, so the transcript reads as a summary of what was set. Off a TTY — a pipe, a test,
+ * Git Bash's mintty without winpty — every prompt is a plain line read, a list is numbered,
+ * and a line of just `ESC` stands for the Esc key; that is what lets the whole UI run over
+ * scripted stdin.
  *
  * One listener instead of `readline`: raw-mode keys and cooked-mode lines would otherwise be
- * seen by two consumers at once.
+ * seen by two consumers at once — and a cooked-mode read never sees Esc at all, the terminal
+ * either eats it or hands it over as a character inside the value.
  */
 export class Prompter {
     private lineBuffer = "";
@@ -220,7 +254,7 @@ export class Prompter {
     private lineWaiter: ((line: string | null) => void) | null = null;
     private inputEnded = false;
 
-    /** Set while a key-driven prompt (select, secret) owns the input. */
+    /** Set while a key-driven prompt owns the input. */
     private keyHandler: ((key: string) => void) | null = null;
 
     /**
@@ -285,6 +319,7 @@ export class Prompter {
     /**
      * Free-text prompt. Enter accepts `defaultValue` when one is shown.
      *
+     * @throws {PromptBackError} On Esc.
      * @throws {PromptClosedError} If the input closes before a line arrives.
      */
     async ask(question: string, defaultValue?: string): Promise<string> {
@@ -294,19 +329,18 @@ export class Prompter {
         }
 
         const prompt = `${this.style.accent(this.symbols.question)} ${this.style.bold(question)}${suffix} `;
-        this.output.write(prompt);
+        const typed = await this.readText(prompt, false);
 
-        const line = await this.readLine();
-        if (line == null) {
-            throw new PromptClosedError();
-        }
-
-        let answer = line.trim();
+        let answer = typed.trim();
         if (answer === "" && defaultValue != null) {
             answer = defaultValue;
         }
 
-        this.collapseAnswered(prompt, line, question, answer);
+        let shown = answer;
+        if (shown === "") {
+            shown = this.style.dim("(empty)");
+        }
+        this.writeAnswered(question, shown);
         return answer;
     }
 
@@ -322,6 +356,10 @@ export class Prompter {
         }
     }
 
+    /**
+     * @throws {PromptBackError} On Esc — the caller decides what "neither" means.
+     * @throws {PromptClosedError} If the input closes before a line arrives.
+     */
     async askYesNo(question: string, defaultValue: boolean): Promise<boolean> {
         let hint = "y/N";
         if (defaultValue == true) {
@@ -330,14 +368,9 @@ export class Prompter {
 
         for (;;) {
             const prompt = `${this.style.accent(this.symbols.question)} ${this.style.bold(question)} ${this.style.dim(`(${hint})`)} `;
-            this.output.write(prompt);
+            const typed = await this.readText(prompt, false);
 
-            const line = await this.readLine();
-            if (line == null) {
-                throw new PromptClosedError();
-            }
-
-            const normalized = line.trim().toLowerCase();
+            const normalized = typed.trim().toLowerCase();
             let answer: boolean | null = null;
             if (normalized === "") {
                 answer = defaultValue;
@@ -354,7 +387,7 @@ export class Prompter {
                 if (answer == true) {
                     shown = "yes";
                 }
-                this.collapseAnswered(prompt, line, question, shown);
+                this.writeAnswered(question, shown);
                 return answer;
             }
 
@@ -363,9 +396,10 @@ export class Prompter {
     }
 
     /**
-     * Picks one of `items`. On a TTY: ↑/↓ (or k/j) move, 1–9 jump, Enter picks, Esc returns
-     * `cancelValue`. Off a TTY: a numbered list, answered by number, key or label.
+     * Picks one of `items`. On a TTY: ↑/↓ move, 1–9 jump, Enter picks, Esc goes back. Off a
+     * TTY: a numbered list, answered by number, key or label.
      *
+     * @throws {PromptBackError} On Esc without a `cancelValue`.
      * @throws {PromptClosedError} On Ctrl+C or when the input closes.
      */
     async select<T extends string>(question: string, items: SelectItem<T>[], options?: SelectOptions<T>): Promise<T> {
@@ -379,76 +413,72 @@ export class Prompter {
             startIndex = items.findIndex((item) => "value" in item);
         }
 
+        let picked: T | null;
         if (this.interactive == true) {
-            const picked = await this.selectWithKeys(question, items, startIndex, options?.cancelValue);
+            picked = await this.selectWithKeys(question, items, startIndex);
+        }
+        else {
+            picked = await this.selectWithLines(question, items, startIndex);
+        }
+
+        if (picked != null) {
             return picked;
         }
 
-        const picked = await this.selectWithLines(question, items, startIndex);
-        return picked;
+        if (options?.cancelValue != null) {
+            return options.cancelValue;
+        }
+
+        throw new PromptBackError();
     }
 
     /**
      * Reads a value without echoing it on a TTY. Empty means "none", or "keep" when the
      * caller says a value already exists.
      *
+     * @throws {PromptBackError} On Esc.
      * @throws {PromptClosedError} On Ctrl+C or when the input closes.
      */
     async askSecret(question: string): Promise<string> {
-        if (this.interactive == false) {
-            const answer = await this.ask(question);
-            return answer;
-        }
-
         const prompt = `${this.style.accent(this.symbols.question)} ${this.style.bold(question)} `;
-        this.output.write(prompt);
+        const secret = await this.readText(prompt, true);
 
-        const ttyInput = this.input as TtyInput;
-
-        return new Promise<string>((resolve, reject) => {
-            let buffer = "";
-
-            const finish = (): void => {
-                this.keyHandler = null;
-                ttyInput.setRawMode?.(false);
-                this.output.write(`\r${ESC}[2K`);
-            };
-
-            this.keyHandler = (key: string) => {
-                if (key === KEY_CTRL_C || key === KEY_CTRL_D) {
-                    finish();
-                    reject(new PromptClosedError());
-                    return;
-                }
-
-                if (KEY_ENTER.includes(key) == true) {
-                    finish();
-                    let shown = this.style.dim("(empty)");
-                    if (buffer !== "") {
-                        shown = "•".repeat(Math.min(buffer.length, 8));
-                    }
-                    this.writeAnswered(question, shown);
-                    resolve(buffer);
-                    return;
-                }
-
-                if (KEY_BACKSPACE.includes(key) == true) {
-                    buffer = Array.from(buffer).slice(0, -1).join("");
-                    return;
-                }
-
-                if (key.startsWith(ESC) == true) {
-                    return;
-                }
-
-                buffer += key;
-            };
-
-            ttyInput.setRawMode?.(true);
-        });
+        let shown = this.style.dim("(empty)");
+        if (secret !== "") {
+            shown = "•".repeat(Math.min(secret.length, 8));
+        }
+        this.writeAnswered(question, shown);
+        return secret;
     }
 
-    // ── line mode ──────────────────────────────────────────────────────────
+    // ── input ──────────────────────────────────────────────────────────────
+
+    /**
+     * One text answer, through the line editor on a TTY and a line read off one. The prompt
+     * is erased once answered; the caller writes the summary line.
+     *
+     * @throws {PromptBackError} On Esc, or a line of just `ESC` off a TTY.
+     */
+    private async readText(prompt: string, secret: boolean): Promise<string> {
+        if (this.interactive == false) {
+            this.output.write(prompt);
+            const line = await this.readLine();
+            if (line == null) {
+                throw new PromptClosedError();
+            }
+            if (line === ESC) {
+                throw new PromptBackError();
+            }
+            return line;
+        }
+
+        const result = await this.editLine(prompt, secret);
+        if (result.kind === "back") {
+            throw new PromptBackError();
+        }
+
+        return result.text;
+    }
 
     private readLine(): Promise<string | null> {
         const queued = this.pendingLines.shift();
@@ -498,7 +528,97 @@ export class Prompter {
         }
     }
 
-    private async selectWithLines<T extends string>(question: string, items: SelectItem<T>[], startIndex: number): Promise<T> {
+    /**
+     * A one-line editor in raw mode: insert at the cursor, Backspace / Delete, ←/→, Home /
+     * End, Ctrl+U clears, Enter answers, Esc goes back. Secrets draw nothing after the
+     * prompt. Cooked mode is not used for text on a TTY because it never reports Esc: the
+     * terminal swallows it or stuffs the `ESC` byte into the value.
+     */
+    private editLine(prompt: string, secret: boolean): Promise<LineReadResult> {
+        const ttyInput = this.input as TtyInput;
+        const plainPrompt = prompt.replace(/\u001b\[[0-9;]*m/g, "");
+
+        let characters: string[] = [];
+        let cursor = 0;
+
+        const draw = (): void => {
+            let text = `\r${ESC}[2K${prompt}`;
+            if (secret == false) {
+                text += characters.join("");
+                const column = displayWidth(plainPrompt) + displayWidth(characters.slice(0, cursor).join(""));
+                text += `\r${ESC}[${column}C`;
+            }
+            this.output.write(text);
+        };
+
+        return new Promise<LineReadResult>((resolve, reject) => {
+            const finish = (): void => {
+                this.keyHandler = null;
+                ttyInput.setRawMode?.(false);
+                this.output.write(`\r${ESC}[2K`);
+            };
+
+            this.keyHandler = (key: string) => {
+                if (key === KEY_CTRL_C || key === KEY_CTRL_D) {
+                    finish();
+                    reject(new PromptClosedError());
+                    return;
+                }
+
+                if (KEY_ENTER.includes(key) == true) {
+                    finish();
+                    resolve({ kind: "entered", text: characters.join("") });
+                    return;
+                }
+
+                if (key === ESC) {
+                    finish();
+                    resolve({ kind: "back" });
+                    return;
+                }
+
+                if (KEY_BACKSPACE.includes(key) == true) {
+                    if (cursor > 0) {
+                        characters.splice(cursor - 1, 1);
+                        cursor -= 1;
+                    }
+                }
+                else if (KEY_DELETE.includes(key) == true) {
+                    characters.splice(cursor, 1);
+                }
+                else if (KEY_LEFT.includes(key) == true) {
+                    cursor = Math.max(0, cursor - 1);
+                }
+                else if (KEY_RIGHT.includes(key) == true) {
+                    cursor = Math.min(characters.length, cursor + 1);
+                }
+                else if (KEY_HOME.includes(key) == true) {
+                    cursor = 0;
+                }
+                else if (KEY_END.includes(key) == true) {
+                    cursor = characters.length;
+                }
+                else if (key === KEY_CLEAR_LINE) {
+                    characters = [];
+                    cursor = 0;
+                }
+                else if (isPrintableKey(key) == true) {
+                    characters.splice(cursor, 0, key);
+                    cursor += 1;
+                }
+                else {
+                    return;
+                }
+
+                draw();
+            };
+
+            ttyInput.setRawMode?.(true);
+            draw();
+        });
+    }
+
+    private async selectWithLines<T extends string>(question: string, items: SelectItem<T>[], startIndex: number): Promise<T | null> {
         const choices = items.filter((item): item is SelectChoice<T> => "value" in item);
         const labelWidths = groupLabelWidths(items);
 
@@ -529,6 +649,10 @@ export class Prompter {
             const line = await this.readLine();
             if (line == null) {
                 throw new PromptClosedError();
+            }
+
+            if (line === ESC) {
+                return null;
             }
 
             const answer = line.trim();
@@ -598,41 +722,15 @@ export class Prompter {
 
     /** The one-line record an answered prompt leaves behind on a TTY. */
     private writeAnswered(question: string, answer: string): void {
-        if (this.transient == true) {
+        if (this.interactive == false || this.transient == true) {
             return;
         }
 
         this.output.write(`${this.style.success(this.symbols.tick)} ${question} ${this.style.dim("·")} ${this.style.accent(answer)}\n`);
     }
 
-    /**
-     * Replaces a cooked-mode prompt and its echoed answer with the one-line record. The
-     * rows are worked out from the widths, since a long answer wraps.
-     */
-    private collapseAnswered(prompt: string, typed: string, question: string, answer: string): void {
-        if (this.interactive == false) {
-            return;
-        }
-
-        const plainPrompt = prompt.replace(/\u001b\[[0-9;]*m/g, "");
-        const used = displayWidth(plainPrompt) + displayWidth(typed);
-        const rows = Math.max(1, Math.ceil(used / this.columns()));
-
-        this.output.write(`${ESC}[${rows}A\r${ESC}[J`);
-
-        let shown = answer;
-        if (shown === "") {
-            shown = this.style.dim("(empty)");
-        }
-        this.writeAnswered(question, shown);
-    }
-
-    private selectWithKeys<T extends string>(
-        question: string,
-        items: SelectItem<T>[],
-        startIndex: number,
-        cancelValue: T | undefined,
-    ): Promise<T> {
+    /** @returns The picked value, or null on Esc. */
+    private selectWithKeys<T extends string>(question: string, items: SelectItem<T>[], startIndex: number): Promise<T | null> {
         const ttyInput = this.input as TtyInput;
         const selectableIndexes = items.flatMap((item, index) => {
             if ("value" in item) {
@@ -691,11 +789,7 @@ export class Prompter {
                 lines.push(this.fitLine(parts, width));
             }
 
-            let footer = "↑↓ move · enter select";
-            if (cancelValue != null) {
-                footer += " · esc back";
-            }
-            lines.push(this.fitLine([{ text: footer, paint: this.style.dim }], width));
+            lines.push(this.fitLine([{ text: "↑↓ move · enter select · esc back", paint: this.style.dim }], width));
 
             return lines;
         };
@@ -706,7 +800,7 @@ export class Prompter {
             active = selectableIndexes[next];
         };
 
-        return new Promise<T>((resolve, reject) => {
+        return new Promise<T | null>((resolve, reject) => {
             const finish = (): void => {
                 this.keyHandler = null;
                 ttyInput.setRawMode?.(false);
@@ -730,11 +824,8 @@ export class Prompter {
                 }
 
                 if (key === ESC) {
-                    if (cancelValue == null) {
-                        return;
-                    }
                     finish();
-                    resolve(cancelValue);
+                    resolve(null);
                     return;
                 }
 

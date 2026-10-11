@@ -2,7 +2,7 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import { PromptClosedError, Prompter } from "@/modules/manage/prompter";
+import { PromptBackError, PromptClosedError, Prompter } from "@/modules/manage/prompter";
 import type { SelectItem } from "@/modules/manage/prompter";
 
 const ESC = "\u001b";
@@ -87,17 +87,14 @@ describe("Prompter.select on a terminal", () => {
         expect(await byNumber).toBe("gamma");
     });
 
-    it("returns the cancel value on Esc, and ignores Esc when there is none", async () => {
+    it("returns the cancel value on Esc when the menu has a back row of its own", async () => {
         const terminal = createTerminal();
         const prompter = new Prompter(terminal.input, terminal.output);
 
         const cancellable = prompter.select("Pick", [...ITEMS, { value: "back", label: "Back" }], { cancelValue: "back" });
         await press(terminal.input, ESC);
-        expect(await cancellable).toBe("back");
 
-        const required = prompter.select("Pick", ITEMS);
-        await press(terminal.input, ESC, ENTER);
-        expect(await required).toBe("alpha");
+        expect(await cancellable).toBe("back");
     });
 
     it("leaves one summary line behind and hands the terminal back", async () => {
@@ -172,5 +169,104 @@ describe("Prompter.select off a terminal", () => {
         expect(screen).toContain("   2) Beta   the second");
         expect(screen).toContain("Pick a number from 1 to 3.");
         expect(screen).not.toContain(ESC);
+    });
+});
+
+describe("Esc means back, everywhere", () => {
+    it("leaves a select without a cancel value as PromptBackError", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+
+        const rejected = expect(prompter.select("Pick", ITEMS)).rejects.toBeInstanceOf(PromptBackError);
+        await press(terminal.input, ESC);
+
+        await rejected;
+        expect(terminal.rawModes).toEqual([true, false]);
+    });
+
+    it("leaves a text field without a value, and never stores the Esc byte", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+
+        const rejected = expect(prompter.ask("Host", "10.0.0.5")).rejects.toBeInstanceOf(PromptBackError);
+        await press(terminal.input, "1", "0", ESC);
+        await rejected;
+
+        // The next prompt starts clean — nothing typed before the Esc leaks into it.
+        const answer = prompter.ask("Host", "10.0.0.5");
+        await press(terminal.input, ENTER);
+        expect(await answer).toBe("10.0.0.5");
+        expect(terminal.screen()).not.toContain(`${ESC}\n`);
+    });
+
+    it("leaves a secret as PromptBackError", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+
+        const rejected = expect(prompter.askSecret("Password")).rejects.toBeInstanceOf(PromptBackError);
+        await press(terminal.input, "p", "w", ESC);
+
+        await rejected;
+        expect(terminal.rawModes).toEqual([true, false]);
+    });
+
+    it("leaves a yes/no as PromptBackError instead of guessing", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+
+        const rejected = expect(prompter.askYesNo("Remove?", false)).rejects.toBeInstanceOf(PromptBackError);
+        await press(terminal.input, ESC);
+
+        await rejected;
+    });
+
+    it("reads a line of just ESC as Esc off a terminal", async () => {
+        const input = new PassThrough();
+        const output = new PassThrough();
+        input.write(`${ESC}\n${ESC}\n${ESC}\n`);
+
+        const prompter = new Prompter(input, output);
+
+        await expect(prompter.ask("Host")).rejects.toBeInstanceOf(PromptBackError);
+        await expect(prompter.select("Pick", ITEMS)).rejects.toBeInstanceOf(PromptBackError);
+        await expect(prompter.askYesNo("Sure?", true)).rejects.toBeInstanceOf(PromptBackError);
+    });
+});
+
+describe("the line editor on a terminal", () => {
+    it("inserts at the cursor, moves with the arrows, and deletes both ways", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+        const LEFT = `${ESC}[D`;
+        const RIGHT = `${ESC}[C`;
+        const HOME = `${ESC}[H`;
+        const DELETE = `${ESC}[3~`;
+        const BACKSPACE = "\u007f";
+
+        const answer = prompter.ask("Host");
+        // "host" → cursor left twice → "hoXst" → home, delete → "oXst" → end-ish via right ×4 → backspace → "oXs"
+        await press(terminal.input, "h", "o", "s", "t", LEFT, LEFT, "X", HOME, DELETE, RIGHT, RIGHT, RIGHT, RIGHT, BACKSPACE, ENTER);
+
+        expect(await answer).toBe("oXs");
+    });
+
+    it("takes a pasted chunk as text, one character per key", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+
+        const answer = prompter.ask("Host");
+        terminal.input.write("10.0.16.12\r");
+
+        expect(await answer).toBe("10.0.16.12");
+    });
+
+    it("clears the line on Ctrl+U", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+
+        const answer = prompter.ask("Host", "fallback");
+        await press(terminal.input, "a", "b", "\u0015", ENTER);
+
+        expect(await answer).toBe("fallback");
     });
 });
