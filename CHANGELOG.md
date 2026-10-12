@@ -2,6 +2,17 @@
 
 All notable changes to `@akms/mcp-ssh`. Dates are `YYYY-MM-DD`.
 
+## 0.1.4 — 2026-10-13
+
+### Documentation
+
+- Expand the `setup` guide with keyboard controls, Esc behavior, the legacy `config`
+  alias, and reconnecting the MCP client after saving.
+- Document release version synchronization across the package files and `SERVER_VERSION`,
+  plus tests, build, CLI smoke checks and package inspection before publishing.
+- Clarify the test suite's local network requirements and its coverage of form navigation
+  and text editing. Runtime behavior is unchanged.
+
 ## 0.1.3 — 2026-10-11
 
 ### Changed

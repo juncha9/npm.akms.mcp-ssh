@@ -167,8 +167,8 @@ prompt is a plain line read, which is what lets the tests script the whole UI.
 |---|---|
 | `manage-entry.test.ts` | defaults omitted, carried variables, stray jump variables, round trip, `loadHostProfile(env)` contract |
 | `manage-toml.test.ts` | parse, append, replace keeping hand-added keys and sub-tables, remove, CRLF, idempotence |
-| `manage-command.test.ts` | the whole UI over scripted stdin against a live in-process `ssh2.Server` and a temp JSON file: the settings form (rows and values, required marks, rows a route brings, discard confirm), add + pin, masked preview, failed check, rename, check-to-pin, print, remove, unreadable file |
-| `manage-prompter.test.ts` | arrow-key select on a simulated TTY (separators skipped, wrap-around, 1–9, Esc, Ctrl+C restores raw mode), answer collapsing, unechoed secrets, numbered fallback |
+| `manage-command.test.ts` | the whole UI over scripted stdin against a live in-process `ssh2.Server` and a temp JSON file: the settings form (rows and values, required marks, rows a route brings, discard confirm), Esc restores fields and follow-up choices, Esc at the preview reopens the form, add + pin, masked preview, failed check, rename, check-to-pin, print, remove, unreadable file |
+| `manage-prompter.test.ts` | arrow-key select on a simulated TTY (separators skipped, wrap-around, 1–9, Esc, Ctrl+C restores raw mode), answer collapsing, unechoed secrets, text editing and pasting, Ctrl+U, Esc in text / secret / yes-no prompts, numbered and ESC-line fallback |
 | `manage-cli-shim.test.ts` | Windows only — a JSON payload full of metacharacters through npm's exact `.cmd` template, byte for byte |
 
 Not covered by tests: the real `claude mcp` CLI writing `~/.claude.json`, and raw-mode

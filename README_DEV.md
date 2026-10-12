@@ -7,6 +7,7 @@ Working on `@akms/mcp-ssh` itself. For installing and configuring it, see [READM
 ```bash
 npm install
 npm run dev             # tsx src/cli.ts — run the server from source
+npm run dev -- setup     # open the host manager from source
 npm run build           # tsc --noEmit + tsup (ESM + CJS + d.ts)
 npm test                # vitest
 npm run test:watch
@@ -99,7 +100,8 @@ The connection check feeds the entry about to be written through `loadHostProfil
 
 ## 🧪 Testing
 
-350+ tests, no network access required.
+The suite uses local fixtures and needs no external SSH hosts or services. Integration tests
+listen on loopback sockets and start and stop local proxy processes; allow those in the test environment.
 
 | File | Covers |
 |---|---|
@@ -115,11 +117,11 @@ The connection check feeds the entry about to be written through `loadHostProfil
 | `tool-integration.test.ts` | **MCP client ↔ server** over an in-memory transport |
 | `manage-entry.test.ts` | `setup` answers ⇄ entry, carried variables, the `loadHostProfile(env)` contract |
 | `manage-toml.test.ts` | Codex TOML: append, replace keeping hand-added keys, remove, CRLF |
-| `manage-command.test.ts` | **The `setup` UI end to end** — scripted stdin, a live `ssh2.Server`, a temp JSON config |
-| `manage-prompter.test.ts` | Arrow-key lists and secret input on a simulated TTY; the numbered fallback off one |
+| `manage-command.test.ts` | **The `setup` UI end to end** — scripted stdin, a live `ssh2.Server`, a temp JSON config; Esc restores fields and reopens the write preview |
+| `manage-prompter.test.ts` | Arrow-key lists, text editing, secret input and Esc on a simulated TTY; numbered choices and ESC-line fallback off one |
 | `manage-cli-shim.test.ts` | Windows only — a JSON payload through npm's `.cmd` shim template, byte for byte |
 
-Two integration styles matter here:
+Three integration styles matter here:
 
 - `route-integration` stands up two servers — a target and a bastion that answers `direct-tcpip` with a real socket — so the jump path is the actual `forwardOut` channel, and the proxy path really spawns a process and speaks SSH over its pipes. Nothing is mocked below ssh2.
 - `exec-integration` / `sftp-integration` stand up a real `ssh2.Server` in-process, so assertions are about the actual wire (`cd '/var/log'` really is sent; a multi-byte character really does survive a packet boundary). The SFTP one implements OPEN/READ/WRITE/READDIR/STAT over an in-memory filesystem.
@@ -149,10 +151,25 @@ Note that `withSftp` exposes ssh2's `SFTPWrapper` in its signature, so consumers
 
 ## 📦 Releasing
 
+Keep the package version and runtime version in sync:
+
+1. Bump `package.json` and both root version fields in `package-lock.json` together.
+   `npm version patch --no-git-tag-version` does this for a patch release; use `minor` or
+   `major` when appropriate.
+2. Set `SERVER_VERSION` in `src/_defs/defaults.ts` to the same value. Both CLI `--version`
+   and the MCP server handshake report this constant.
+3. Add a dated entry to `CHANGELOG.md` and update the user and developer docs for the change.
+
+Validate the release from the working tree:
+
 ```bash
+npm test
 npm run build
-npm pack --dry-run   # confirm lib/, README.md, LICENSE.md
-npm publish
+node lib/cli.js --version   # must match package.json
+node lib/cli.js --help      # confirm the CLI starts and lists setup
+npm pack --dry-run          # inspect the version and packaged files
 ```
 
-`files` in package.json controls the tarball — source, tests and this document are excluded.
+`files` in `package.json` controls the tarball: `lib/`, `README.md` and `LICENSE.md`, plus
+the automatically included `package.json`. Source, tests and this document are excluded.
+Once the release is ready, `npm publish` publishes it to the registry.

@@ -31,4 +31,4 @@ export const SERVER_NAME = "akms-mcp-ssh";
 /** What `npx -y …` resolves — the `args` the `setup` command writes into every entry. */
 export const PACKAGE_NAME = "@akms/mcp-ssh";
 
-export const SERVER_VERSION = "0.1.3";
+export const SERVER_VERSION = "0.1.4";

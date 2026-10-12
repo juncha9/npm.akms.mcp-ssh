@@ -8,9 +8,12 @@ The host is **pre-registered** in the server's own environment; the agent never 
 
 ## 📦 Installation
 
+Requires Node.js 18 or later.
+
 ```bash
 npm install -g @akms/mcp-ssh   # installs the `akms-mcp-ssh` command
 npx -y @akms/mcp-ssh --help    # or run it straight from the registry
+akms-mcp-ssh --version        # show the installed version
 ```
 
 ## ⚙️ MCP client setup
@@ -21,6 +24,8 @@ npx -y @akms/mcp-ssh --help    # or run it straight from the registry
 npx -y @akms/mcp-ssh setup                   # opens on the first client found on this machine
 npx -y @akms/mcp-ssh setup --target codex    # claude-code | codex | claude-desktop | cursor
 ```
+
+The old `config` command remains an alias for `setup`; existing invocations still work.
 
 ```
 Claude Code (user scope)  /home/me/.claude.json
@@ -34,7 +39,22 @@ Claude Code (user scope)  /home/me/.claude.json
 ↑↓ move · enter select · esc back
 ```
 
-The hosts are the menu: pick one to edit, check, print or remove it. Adding or editing a host opens a settings form — every setting listed with its value, picked and changed in any order, with **Test the connection** and **Save** below. Choices are picked with the arrow keys, and Esc always goes back one level — the private key from the keys found in `~/.ssh`, the route as "directly / through a jump host / through a proxy command". Where the terminal cannot send arrow keys (a pipe, Git Bash's mintty), the same lists are numbered and answered by number.
+The hosts are the menu: pick one to edit, check, print or remove it. Adding or editing a host opens a settings form — every setting listed with its value, picked and changed in any order, with **Test the connection** and **Save** below. Choose a private key from the keys found in `~/.ssh`, and a route: directly, through a jump host, through a proxy command, or through both.
+
+On an interactive terminal:
+
+| Keys | Action |
+|---|---|
+| ↑ / ↓, Enter | Move through a menu and select a setting or action |
+| Esc | Go back one level; inside a field or choice, return to the form with that setting unchanged |
+| ← / →, Home / End | Move the cursor within text being entered |
+| Backspace / Delete, Ctrl+U | Delete characters or clear the current input line |
+| Enter with no input | Keep the displayed value; enter `-` to clear an optional value |
+| Ctrl+C / Ctrl+D | Exit setup |
+
+Esc also undoes a choice when pressed in its follow-up question: choosing a jump route and then pressing Esc at the jump-host prompt restores the previous route. Esc at the **Write it?** preview reopens the form with the entered values. Leaving a changed form with Cancel or Esc asks whether to discard changes.
+
+Without an interactive terminal (a pipe, or Git Bash's mintty without winpty), the same menus use numbered choices; enter a number, key or label followed by Enter. After saving, restart the MCP client or reconnect the server from its MCP menu to load the updated entry.
 
 | Client | Config file | How it is written |
 |---|---|---|
