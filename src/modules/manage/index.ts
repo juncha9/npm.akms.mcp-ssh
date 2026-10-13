@@ -24,7 +24,7 @@ const SECRET_ENV_NAMES: string[] = [
 /** Prefix of a host row's select value, so a host named like an action can't collide with it. */
 const HOST_VALUE_PREFIX = "host:";
 
-export interface SetupCommandOptions {
+export interface ConfigCommandOptions {
     input: Readable;
     output: Writable;
     /** Supported clients; tests pass their own so nothing under the real home is touched. */
@@ -278,13 +278,13 @@ async function manageHost(
 }
 
 /**
- * `akms-mcp-ssh setup` — an interactive manager for the SSH hosts registered in an MCP
+ * `akms-mcp-ssh config` — an interactive manager for the SSH hosts registered in an MCP
  * client's config. The hosts themselves are the menu: pick one to edit, check, print or
  * remove it, or pick an action below them. The `SSH_*` names never have to be typed.
  *
  * @returns Process exit code.
  */
-export async function runSetupCommand(options: SetupCommandOptions): Promise<number> {
+export async function runConfigCommand(options: ConfigCommandOptions): Promise<number> {
     const { input, output } = options;
     const targets = options.targets ?? listConfigTargets();
 

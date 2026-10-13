@@ -10,7 +10,7 @@ import ssh2 from "ssh2";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { ConfigTarget, McpServerEntry } from "@/_types";
-import { runSetupCommand } from "@/modules/manage";
+import { runConfigCommand } from "@/modules/manage";
 import { createJsonFileTarget } from "@/modules/manage/targets/json-file";
 import { toHostKeyFingerprint } from "@/modules/ssh/ssh-connection";
 
@@ -108,7 +108,7 @@ async function runScript(lines: string[]): Promise<{ exitCode: number; screen: s
 
     input.end(lines.map((line) => `${line}\n`).join(""));
 
-    const exitCode = await runSetupCommand({ input: input, output: output, targets: [target] });
+    const exitCode = await runConfigCommand({ input: input, output: output, targets: [target] });
     return { exitCode: exitCode, screen: screen };
 }
 
@@ -122,7 +122,7 @@ function seedHost(name: string, env: Record<string, string>): void {
     fs.writeFileSync(configPath, JSON.stringify(document, null, 2));
 }
 
-describe("setup — adding a host", () => {
+describe("config — adding a host", () => {
     it("fills the settings form, checks the connection, pins the key and writes the entry", async () => {
         const { exitCode, screen } = await runScript([
             "a",                                // main menu → add
@@ -297,7 +297,7 @@ describe("setup — adding a host", () => {
     });
 });
 
-describe("setup — managing existing hosts", () => {
+describe("config — managing existing hosts", () => {
     it("lists only this package's servers and counts the rest", async () => {
         seedHost("ssh-prod", { SSH_HOST: "10.0.0.5", SSH_USER: "deploy", SSH_READONLY: "true" });
 

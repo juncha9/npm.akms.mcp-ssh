@@ -1,6 +1,6 @@
-# `setup` command — design
+# `config` command — design
 
-Status: **implemented**, 2026-10-11. Proposed 2026-10-10 as `setup`, shipped in 0.1.0 – 0.1.2 as `config`, named `setup` again from 0.1.3 (`config` stays as a hidden alias).
+Status: **implemented**, 2026-10-11. Updated for **0.1.5**, 2026-10-13: `config` is the only configuration command; the former `setup` command exits with code 1 and a reminder to use `config`.
 
 ## 🎯 Problem
 
@@ -14,7 +14,7 @@ own JSON files.
 
 | Question | Decision |
 |---|---|
-| Entry point | `akms-mcp-ssh setup` — a management UI (list / add / edit / remove / check / print / switch client), not a one-shot wizard |
+| Entry point | `akms-mcp-ssh config` — a management UI (list / add / edit / remove / check / print / switch client), not a one-shot wizard |
 | Claude Code scope | **user only** (`~/.claude.json`). Project `.mcp.json` dropped — an SSH host belongs to a person, not a repo |
 | Paste-ready output | yes — Print shows JSON, a Codex TOML table and a `claude mcp add-json` line |
 | Flags | `--target <client>` only. No `--host` / `--user` flags: they would bring back the names the wizard hides |
@@ -23,7 +23,7 @@ own JSON files.
 ## 🧭 Flow
 
 ```
-setup [--target <client>]
+config [--target <client>]
  └─ loop: the hosts in the current client's file ARE the menu
      ├─ <host>          → Edit / Check the connection / Print the entry / Remove / Back
      │    ├─ Edit       the settings form, pre-filled → preview → write;
@@ -111,7 +111,7 @@ use, and every dependency is also downloaded by each `npx -y` launch of the serv
   (`mcp__<name>__ssh_exec`); the default `ssh-<host>` has dots replaced.
 - **The check is the server's own startup path.** The built env goes through
   `loadHostProfile(env)` and the same report `--check` prints, so a value the server would
-  reject is caught before writing, and a host that passes setup passes `--check`.
+  reject is caught before writing, and a host that passes the configuration check passes `--check`.
 - **Pinning is offered, re-pinning is not defaulted.** An unpinned key gets "Pin it? [Y/n]".
   A pinned key that no longer matches gets "[y/N]" — it is also what an impersonated host
   looks like.
@@ -149,7 +149,7 @@ does not parse is never written; the UI says so and offers only switch / quit.
 
 ```
 src/modules/manage/
-├── index.ts             runSetupCommand() — the host menu, check/print/remove, preview + write
+├── index.ts             runConfigCommand() — the host menu, check/print/remove, preview + write
 ├── host-form.ts         the settings form for add / edit; key discovery; test + pin
 ├── prompter.ts          select / text / secret prompts over any stream pair
 ├── entry.ts             answers ⇄ entry, isOurEntry, list summary

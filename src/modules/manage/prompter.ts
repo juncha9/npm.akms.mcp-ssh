@@ -2,7 +2,7 @@ import type { Readable, Writable } from "node:stream";
 
 /**
  * Input ended before a prompt was answered — Ctrl+D, Ctrl+C, or a piped script running out.
- * The `setup` loop treats it as leaving, not as a failure.
+ * The `config` loop treats it as leaving, not as a failure.
  */
 export class PromptClosedError extends Error {
     constructor() {

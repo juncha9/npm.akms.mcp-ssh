@@ -4,32 +4,25 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { LOG_LEVEL_ENV, SERVER_NAME, SERVER_VERSION, SINGLE_HOST_ENV } from "@/_defs";
 import { $logger } from "@/_libs";
 import type { SshHostProfile } from "@/_types";
-import { runConnectionCheck, runSetupCommand } from "@/modules/manage";
+import { runConnectionCheck, runConfigCommand } from "@/modules/manage";
 import { createSshMcpServer } from "@/server";
-
-/**
- * First arguments that open the host manager. `config` is what 0.1.0 – 0.1.2 called it;
- * without the alias that old name would fall through to starting the MCP server, which
- * then sits waiting on stdin with no explanation.
- */
-const SETUP_COMMAND_NAMES = ["setup", "config"];
 
 interface CliArguments {
     showHelp: boolean;
     showVersion: boolean;
     checkOnly: boolean;
-    /** `setup` as the first argument opens the host manager instead of the server. */
-    setupMode: boolean;
-    /** `--target <id>` — the client `setup` opens on. */
+    /** `config` as the first argument opens the host manager instead of the server. */
+    configMode: boolean;
+    /** `--target <id>` — the client `config` opens on. */
     targetId?: string;
 }
 
 function parseArguments(argv: string[]): CliArguments {
-    const parsed: CliArguments = { showHelp: false, showVersion: false, checkOnly: false, setupMode: false };
+    const parsed: CliArguments = { showHelp: false, showVersion: false, checkOnly: false, configMode: false };
 
     let rest = argv;
-    if (argv[0] != null && SETUP_COMMAND_NAMES.includes(argv[0]) == true) {
-        parsed.setupMode = true;
+    if (argv[0] === "config") {
+        parsed.configMode = true;
         rest = argv.slice(1);
     }
 
@@ -71,17 +64,17 @@ const HELP_TEXT = [
     "",
     "Usage:",
     "  akms-mcp-ssh [--check]",
-    "  akms-mcp-ssh setup [--target <client>]",
+    "  akms-mcp-ssh config [--target <client>]",
     "",
     "Commands:",
-    "  setup                Manage the SSH hosts registered in an MCP client's config —",
+    "  config               Manage the SSH hosts registered in an MCP client's config —",
     "                       list, add, edit, remove, check, print. Asks plain questions,",
     "                       so the SSH_* names below never have to be typed.",
     "",
     "Options:",
     "      --check          Connect to the configured host, report the result, and exit.",
     "                       Prints the host key fingerprint so it can be pinned.",
-    "      --target <id>    setup: claude-code | codex | claude-desktop | cursor",
+    "      --target <id>    config: claude-code | codex | claude-desktop | cursor",
     "                       (default: the first one installed)",
     "  -v, --version        Print the version and exit",
     "  -h, --help           Print this help and exit",
@@ -116,14 +109,14 @@ const HELP_TEXT = [
 
 /**
  * `--check`: connects to the configured host and reports what happened. The report itself
- * is shared with `setup`, so a host that passes setup passes `--check`. Writes to stdout
- * because this mode is not an MCP session.
+ * is shared with `config`, so a host that passes the configuration check passes `--check`.
+ * Writes to stdout because this mode is not an MCP session.
  *
  * @returns Process exit code: 0 when the host is reachable.
  */
 async function runCheckCommand(profile: SshHostProfile | null): Promise<number> {
     if (profile == null) {
-        process.stdout.write(`No SSH host is registered — set ${SINGLE_HOST_ENV.HOST} and ${SINGLE_HOST_ENV.USER}, or run: akms-mcp-ssh setup\n`);
+        process.stdout.write(`No SSH host is registered — set ${SINGLE_HOST_ENV.HOST} and ${SINGLE_HOST_ENV.USER}, or run: akms-mcp-ssh config\n`);
         return 1;
     }
 
@@ -138,6 +131,12 @@ async function runCheckCommand(profile: SshHostProfile | null): Promise<number> 
 async function main(): Promise<void> {
     const _logger = $logger.child({ context: "cli" });
 
+    if (process.argv[2] === "setup") {
+        process.stderr.write("The setup command has been removed. Use akms-mcp-ssh config.\n");
+        process.exitCode = 1;
+        return;
+    }
+
     const cliArguments = parseArguments(process.argv.slice(2));
 
     if (cliArguments.showHelp == true) {
@@ -150,14 +149,14 @@ async function main(): Promise<void> {
         return;
     }
 
-    if (cliArguments.setupMode == true) {
+    if (cliArguments.configMode == true) {
         // The manager is a terminal UI: log lines on stderr would land in the middle of a
-        // prompt. Warnings stay — a missing key file is worth seeing during setup.
+        // prompt. Warnings stay — a missing key file is worth seeing during configuration.
         if (process.env[LOG_LEVEL_ENV] == null) {
             process.env[LOG_LEVEL_ENV] = "warn";
         }
 
-        const exitCode = await runSetupCommand({
+        const exitCode = await runConfigCommand({
             input: process.stdin,
             output: process.stdout,
             targetId: cliArguments.targetId,

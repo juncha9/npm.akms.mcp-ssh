@@ -18,14 +18,14 @@ akms-mcp-ssh --version        # show the installed version
 
 ## ⚙️ MCP client setup
 
-**Let the CLI write it.** `setup` opens a small manager for the hosts registered in a client's config. It asks plain questions — host, user, key or password, jump host, read-only — tests the connection, offers to pin the host key, and writes the entry. No `SSH_*` name has to be remembered.
+**Let the CLI write it.** `config` opens a small manager for the hosts registered in a client's config. It asks plain questions — host, user, key or password, jump host, read-only — tests the connection, offers to pin the host key, and writes the entry. No `SSH_*` name has to be remembered.
 
 ```bash
-npx -y @akms/mcp-ssh setup                   # opens on the first client found on this machine
-npx -y @akms/mcp-ssh setup --target codex    # claude-code | codex | claude-desktop | cursor
+npx -y @akms/mcp-ssh config                   # opens on the first client found on this machine
+npx -y @akms/mcp-ssh config --target codex    # claude-code | codex | claude-desktop | cursor
 ```
 
-The old `config` command remains an alias for `setup`; existing invocations still work.
+Starting in **0.1.5**, `config` is the only configuration command. Update scripts and shortcuts to use `akms-mcp-ssh config`; `--target` works as before. The former `setup` command exits with code 1 and a reminder to use `config`.
 
 ```
 Claude Code (user scope)  /home/me/.claude.json
@@ -50,7 +50,7 @@ On an interactive terminal:
 | ← / →, Home / End | Move the cursor within text being entered |
 | Backspace / Delete, Ctrl+U | Delete characters or clear the current input line |
 | Enter with no input | Keep the displayed value; enter `-` to clear an optional value |
-| Ctrl+C / Ctrl+D | Exit setup |
+| Ctrl+C / Ctrl+D | Exit configuration |
 
 Esc also undoes a choice when pressed in its follow-up question: choosing a jump route and then pressing Esc at the jump-host prompt restores the previous route. Esc at the **Write it?** preview reopens the form with the entered values. Leaving a changed form with Cancel or Esc asks whether to discard changes.
 
