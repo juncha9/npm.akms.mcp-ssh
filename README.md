@@ -84,7 +84,7 @@ Only entries that launch this package are listed or touched. An edit keeps every
 
 `SSH_HOST` + `SSH_USER` is the whole minimum, and the **private key stays a file on disk** — only its path goes in the config. Because each server fronts one host, the agent never names it: `ssh_exec({ command: "df -h" })` is a complete call. The server name (`ssh-prod`) is what the agent sees in its tool list, so name it after the host.
 
-The server speaks MCP over **stdio**: stdout carries the JSON-RPC stream and all logging goes to stderr. Running it by hand in a terminal only prints the startup line and waits.
+The server speaks MCP over **stdio**: stdout carries the JSON-RPC stream and all logging goes to stderr. Running it by hand in a terminal only prints the startup line and waits. When the client goes away — stdin ends, or the process is simply gone — the server closes its sessions and exits within a few seconds on its own; a stderr nobody reads is never a reason to stay. Its log says `mcp server ready on stdio` with its `pid`, for when one has to be found among a client's processes.
 
 ## 🗂️ Host configuration
 

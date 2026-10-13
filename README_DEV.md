@@ -98,6 +98,19 @@ The `config` command edits other programs' config files, so each target is writt
 
 The connection check feeds the entry about to be written through `loadHostProfile(env)` and the same report `--check` prints. A value the server would reject is therefore caught before it is written, and a host that passes the configuration check passes `--check`. Full rules and rationale are in [docs/design/setup-command.md](docs/design/setup-command.md).
 
+### A dead stderr is never a reason to stay
+
+When the MCP client dies, every pipe the server holds dies with it. stdin's EOF starts the shutdown, and
+the first log line of that shutdown goes to a stderr nobody reads: on Windows the write fails
+asynchronously with EPIPE as an `'error'` event on `process.stderr`. The logger owns one listener for
+that event and drops every later line (`stderrBroken`), so the failure is never logged — logging it
+was the loop that kept `@akms/mcp-db` 0.1.1 behind at 100% CPU, measured 2026-10-13 under Claude
+Code's `cmd /c` launch. Here the exit used to win the race because `shutdown()` is synchronous; the
+guard removes the race, the `uncaughtException` handler keeps one session's stray error from ending the
+client's whole tool set, and `SHUTDOWN_DEADLINE_MS` (5 s) exits regardless of what the transport or a
+gone peer still owes. `tests/cli-shutdown.test.ts` starts the server the way Claude Code does and
+expects it gone within 5 s of the client's death.
+
 ## 🧪 Testing
 
 The suite uses local fixtures and needs no external SSH hosts or services. Integration tests

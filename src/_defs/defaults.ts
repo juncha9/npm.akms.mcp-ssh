@@ -20,6 +20,9 @@ export const SESSION_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 
 export const SESSION_SWEEP_INTERVAL_MS = 60_000;
 
+/** Shutdown waits this long for the sessions and the transport to close, then exits anyway — a dead peer must not keep the process alive. */
+export const SHUTDOWN_DEADLINE_MS = 5_000;
+
 /** Emitted after the user command so the session can track `cd` between execs. */
 export const CWD_MARKER = "__AKMS_SSH_CWD__";
 
@@ -31,4 +34,4 @@ export const SERVER_NAME = "akms-mcp-ssh";
 /** What `npx -y …` resolves — the `args` the `config` command writes into every entry. */
 export const PACKAGE_NAME = "@akms/mcp-ssh";
 
-export const SERVER_VERSION = "0.1.5";
+export const SERVER_VERSION = "0.1.6";

@@ -2,6 +2,26 @@
 
 All notable changes to `@akms/mcp-ssh`. Dates are `YYYY-MM-DD`.
 
+## 0.1.6 — 2026-10-13
+
+### Fixed
+
+- Never stay behind when the MCP client dies. The first log line written after stdin ends goes to
+  a stderr nobody reads; that EPIPE is now absorbed once and logging stops for good, instead of
+  being logged again (the loop that kept `@akms/mcp-db` 0.1.1 alive at 100% CPU). Shutdown also
+  has a 5 s deadline (`SHUTDOWN_DEADLINE_MS`) after which the process exits regardless.
+- Keep the server running through an uncaught exception or unhandled rejection raised by one
+  session instead of taking every tool of the client down; both are logged.
+
+### Changed
+
+- The `mcp server ready on stdio` log line carries the process `pid`.
+
+### Verification
+
+- Add `tests/cli-shutdown.test.ts`: starts the server through `cmd /c` the way Claude Code does
+  on Windows, completes the handshake, lets the client die, and expects the server gone within 5 s.
+
 ## 0.1.5 — 2026-10-13
 
 ### Changed

@@ -1,6 +1,6 @@
 {
     "name": "@akms/mcp-ssh",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "description": "MCP server that lets an AI agent run shell commands and transfer files on one pre-registered SSH host, with every command and path screened by a guard policy.",
     "keywords": [],
     "license": "MIT",

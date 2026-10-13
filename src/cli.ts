@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
-import { LOG_LEVEL_ENV, SERVER_NAME, SERVER_VERSION, SINGLE_HOST_ENV } from "@/_defs";
+import { LOG_LEVEL_ENV, SERVER_NAME, SERVER_VERSION, SHUTDOWN_DEADLINE_MS, SINGLE_HOST_ENV } from "@/_defs";
 import { $logger } from "@/_libs";
 import type { SshHostProfile } from "@/_types";
 import { runConnectionCheck, runConfigCommand } from "@/modules/manage";
@@ -181,6 +181,15 @@ async function main(): Promise<void> {
         process.exit(exitCode);
     }
 
+    // A stray error in one session must not take every tool of this client down with it. The logger's
+    // stderr guard is what keeps this from looping when the failure is the log channel itself.
+    process.on("uncaughtException", (error) => {
+        _logger.error(error, "uncaught exception; the server keeps running");
+    });
+    process.on("unhandledRejection", (reason) => {
+        _logger.error(reason, "unhandled rejection; the server keeps running");
+    });
+
     let shuttingDown = false;
     const shutdown = (signal: string): void => {
         if (shuttingDown == true) {
@@ -189,6 +198,13 @@ async function main(): Promise<void> {
         shuttingDown = true;
 
         _logger.info("shutting down", { signal: signal });
+        // closeAll() ends every ssh2 client and server.close() waits for the transport; neither should take
+        // long, and a peer that is already gone must not keep the process alive. unref: a shutdown that
+        // finishes earlier exits through its own process.exit, not through this timer
+        setTimeout(() => {
+            _logger.warn("shutdown did not finish in time; exiting anyway", { deadline_ms: SHUTDOWN_DEADLINE_MS });
+            process.exit(0);
+        }, SHUTDOWN_DEADLINE_MS).unref();
         instance.shutdown();
         void instance.server.close().finally(() => {
             process.exit(0);
@@ -211,10 +227,12 @@ async function main(): Promise<void> {
     const transport = new StdioServerTransport();
     await instance.server.connect(transport);
 
+    // The pid is what an operator needs to find this server among a client's processes
     _logger.info("mcp server ready on stdio", {
         server: SERVER_NAME,
         version: SERVER_VERSION,
         profile: instance.profile?.name ?? null,
+        pid: process.pid,
     });
 }
 
