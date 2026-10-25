@@ -4,15 +4,13 @@ import fs from "node:fs";
 import { Duplex } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 
-import ssh2 from "ssh2";
+import type ssh2 from "ssh2";
 import type { ConnectConfig, SFTPWrapper } from "ssh2";
 
 import { CWD_MARKER, KEEPALIVE_INTERVAL_MS } from "@/_defs";
 import { $logger, quoteShellArgument, truncateOutput } from "@/_libs";
 import type { SshExecResult, SshHostProfile, SshJumpProfile } from "@/_types";
 import { GuardRejectionError, canonicalizeCommand, inspectCommand, inspectWorkingDirectory } from "@/modules/guard";
-
-const { Client } = ssh2;
 
 /** Stops runaway output from filling the heap before truncation can happen. */
 const OUTPUT_HARD_CAP_MULTIPLIER = 4;
@@ -287,7 +285,8 @@ function openJumpTransport(
     profile: SshHostProfile,
     jump: SshJumpProfile,
     proxy: Transport | null,
-    onHostKeySeen: (fingerprint: string) => void
+    onHostKeySeen: (fingerprint: string) => void,
+    Client: typeof ssh2.Client
 ): Promise<Transport> {
     const label = `${profile.name} jump host`;
     const endpoint = `${jump.username}@${jump.host}:${jump.port}`;
@@ -373,7 +372,8 @@ function openJumpTransport(
  */
 async function openTransport(
     profile: SshHostProfile,
-    onJumpHostKeySeen: (fingerprint: string) => void
+    onJumpHostKeySeen: (fingerprint: string) => void,
+    Client: typeof ssh2.Client
 ): Promise<Transport | null> {
     let proxy: Transport | null = null;
     if (profile.proxyCommand != null) {
@@ -388,7 +388,7 @@ async function openTransport(
     // up (an unreadable jump key throws before any socket is touched) must not leave it
     // behind as an orphan.
     try {
-        const jumpTransport = await openJumpTransport(profile, profile.jump, proxy, onJumpHostKeySeen);
+        const jumpTransport = await openJumpTransport(profile, profile.jump, proxy, onJumpHostKeySeen, Client);
         return jumpTransport;
     }
     catch (ex) {
@@ -491,6 +491,12 @@ export class SshConnection {
         return this.droppedAfterReady;
     }
 
+    private assertNotDisposed(): void {
+        if (this.disposed == true) {
+            throw new Error(`ssh connection for '${this.profile.name}' has been closed; open a new session`);
+        }
+    }
+
     /**
      * Opens the connection, or joins the in-flight attempt when one is already running.
      *
@@ -500,10 +506,8 @@ export class SshConnection {
      * @throws {Error} If the connection was closed, authentication fails, the host is
      *                 unreachable, the handshake times out, or the carrier cannot be opened.
      */
-    async connect(): Promise<void> {
-        if (this.disposed == true) {
-            throw new Error(`ssh connection for '${this.profile.name}' has been closed; open a new session`);
-        }
+    async connect(onProgress?: (stage: "transport" | "host") => void): Promise<void> {
+        this.assertNotDisposed();
 
         if (this.client != null) {
             return;
@@ -527,9 +531,16 @@ export class SshConnection {
         });
 
         this.connecting = (async () => {
+            // Loading ssh2 starts its crypto runtime. Idle MCP connections and local
+            // configuration work do not need it; share this load with the handshake.
+            const { default: { Client } } = await import("ssh2");
+            this.assertNotDisposed();
+            if (this.profile.jump != null || this.profile.proxyCommand != null) {
+                onProgress?.("transport");
+            }
             const transport = await openTransport(this.profile, (fingerprint) => {
                 this.observedJumpFingerprint = fingerprint;
-            });
+            }, Client);
 
             // disconnect() may have run while the carrier was being opened.
             if (this.disposed == true) {
@@ -541,6 +552,7 @@ export class SshConnection {
                 connectConfig.sock = transport.sock;
             }
 
+            onProgress?.("host");
             await new Promise<void>((resolve, reject) => {
                 const client = new Client();
                 this.pendingClient = client;

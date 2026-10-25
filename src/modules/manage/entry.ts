@@ -1,3 +1,4 @@
+import { launchCommand, launchKind } from "../registration/runtime";
 import { DEFAULT_SSH_PORT, PACKAGE_NAME, SERVER_NAME, SINGLE_HOST_ENV, TRUTHY_ENV_VALUES } from "@/_defs";
 import type { HostSetupAnswers, McpServerEntry } from "@/_types";
 
@@ -34,27 +35,9 @@ const JUMP_ENV_PREFIX = "SSH_JUMP_";
 export const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,48}$/;
 
 /** True for entries that launch this package — the only ones the `config` command manages. */
-export function isOurEntry(entry: McpServerEntry): boolean {
-    if (entry.args.includes(PACKAGE_NAME) == true) {
-        return true;
-    }
+export function isOurEntry(entry: McpServerEntry): boolean { return launchKind(entry) === "ssh"; }
 
-    const commandBase = entry.command.replace(/\\/g, "/").split("/").pop() ?? "";
-    return commandBase === SERVER_NAME || commandBase.startsWith(`${SERVER_NAME}.`) == true;
-}
 
-/**
- * How the client launches the server. On native Windows `npx` is a `.cmd` shim that a
- * client spawning without a shell cannot start, so it goes behind `cmd /c` — the wrapper
- * Claude Code's own docs prescribe for npx servers on Windows.
- */
-function launchCommand(): { command: string; args: string[] } {
-    if (process.platform === "win32") {
-        return { command: "cmd", args: ["/c", "npx", "-y", PACKAGE_NAME] };
-    }
-
-    return { command: "npx", args: ["-y", PACKAGE_NAME] };
-}
 
 /**
  * Renders the answers as an entry. A value equal to the server's default is left out, so
@@ -127,7 +110,7 @@ export function answersToEntry(answers: HostSetupAnswers): McpServerEntry {
         env[name] = value;
     }
 
-    const launch = launchCommand();
+    const launch = launchCommand("ssh");
     return {
         command: launch.command,
         args: launch.args,

@@ -137,7 +137,8 @@ export function inspectLocalPath(
         }
     }
 
-    for (const protectedPath of extraProtectedPaths) {
+    const registryPaths = process.env.AKMS_MCP_HOME ? ["registry.json", "registry.previous.json"].map(file => path.resolve(process.env.AKMS_MCP_HOME!, file)) : [];
+    for (const protectedPath of [...extraProtectedPaths, ...registryPaths]) {
         if (protectedPath === "") {
             continue;
         }

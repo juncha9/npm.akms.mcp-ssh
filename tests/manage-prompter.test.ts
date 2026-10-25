@@ -148,6 +148,69 @@ describe("Prompter text prompts on a terminal", () => {
     });
 });
 
+describe("Prompter.pause after a report", () => {
+    it("keeps the next menu hidden until Enter and restores raw mode", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+        prompter.write("Connection failed: the server refused the connection.\n");
+
+        const next = (async () => {
+            await prompter.pause();
+            return prompter.select("Next menu", ITEMS);
+        })();
+        await press(terminal.input, DOWN);
+
+        expect(stripAnsi(terminal.screen())).toContain("Press Enter to continue");
+        expect(terminal.screen()).not.toContain("Next menu");
+        expect(terminal.rawModes).toEqual([true]);
+
+        await press(terminal.input, ENTER);
+        expect(terminal.screen()).toContain("Next menu");
+        await press(terminal.input, ENTER);
+        expect(await next).toBe("alpha");
+        expect(terminal.rawModes).toEqual([true, false, true, false]);
+    });
+
+    it("lets Esc go back and Ctrl+C cancel without continuing", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+
+        const back = expect(prompter.pause()).rejects.toBeInstanceOf(PromptBackError);
+        await press(terminal.input, ESC);
+        await back;
+
+        const cancelled = expect(prompter.pause()).rejects.toBeInstanceOf(PromptClosedError);
+        await press(terminal.input, CTRL_C);
+        await cancelled;
+        expect(terminal.rawModes).toEqual([true, false, true, false]);
+    });
+
+    it("handles input ending during and before a pause", async () => {
+        const terminal = createTerminal();
+        const prompter = new Prompter(terminal.input, terminal.output);
+        const closed = expect(prompter.pause()).rejects.toBeInstanceOf(PromptClosedError);
+        terminal.input.end();
+        await closed;
+        await expect(prompter.pause()).rejects.toBeInstanceOf(PromptClosedError);
+        expect(terminal.rawModes).toEqual([true, false]);
+    });
+
+    it("does not consume a scripted answer or print a pause off a terminal", async () => {
+        const input = new PassThrough();
+        const output = new PassThrough();
+        let screen = "";
+        output.on("data", (chunk: Buffer) => {
+            screen += chunk.toString();
+        });
+        const prompter = new Prompter(input, output);
+        input.end("beta\n");
+
+        await prompter.pause();
+        expect(screen).toBe("");
+        expect(await prompter.select("Pick", ITEMS)).toBe("beta");
+    });
+});
+
 describe("Prompter.select off a terminal", () => {
     it("numbers the choices and accepts a number, a key or a label", async () => {
         const input = new PassThrough();

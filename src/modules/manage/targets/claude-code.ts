@@ -7,7 +7,7 @@ import path from "node:path";
 import { findExecutable } from "@/_libs";
 import type { ConfigTarget, ConfigWriteResult, McpServerEntry } from "@/_types";
 
-import { readMcpServersJson } from "./json-file";
+import { readMcpServersJson, readRawMcpServersJson } from "./json-file";
 
 /** The user-scope file; `mcpServers` at its top level is what `claude mcp … -s user` edits. */
 const CLAUDE_CODE_CONFIG_PATH = path.join(os.homedir(), ".claude.json");
@@ -79,7 +79,7 @@ function runClaude(executable: string, args: string[]): ConfigWriteResult {
     return { status: "written", detail: CLAUDE_CODE_CONFIG_PATH };
 }
 
-function readClaudeEntries(): Record<string, McpServerEntry> {
+function readRawClaudeEntries(): Record<string, unknown> {
     if (fs.existsSync(CLAUDE_CODE_CONFIG_PATH) == false) {
         return {};
     }
@@ -97,7 +97,7 @@ function readClaudeEntries(): Record<string, McpServerEntry> {
         throw new Error(`${CLAUDE_CODE_CONFIG_PATH} is not valid JSON: ${detail}`);
     }
 
-    return readMcpServersJson(document);
+    return readRawMcpServersJson(document);
 }
 
 /**
@@ -114,20 +114,28 @@ export function createClaudeCodeTarget(): ConfigTarget {
         location: CLAUDE_CODE_CONFIG_PATH,
         detected: executable != null || fs.existsSync(CLAUDE_CODE_CONFIG_PATH) == true,
 
-        readEntries: readClaudeEntries,
+        readEntries(): Record<string, McpServerEntry> {
+            return readMcpServersJson({ mcpServers: readRawClaudeEntries() });
+        },
+
+        hasEntry(name: string): boolean {
+            return Object.hasOwn(readRawClaudeEntries(), name);
+        },
 
         writeEntry(name: string, entry: McpServerEntry): ConfigWriteResult {
             if (executable == null) {
                 return {
                     status: "unavailable",
-                    detail: `the claude CLI is not on PATH — run this yourself:\n  ${formatClaudeAddCommand(name, entry)}`,
+                    detail: "the claude CLI is not on PATH — install it, or use Print to get a command to run yourself",
                 };
             }
 
             // `add-json` refuses a name that exists, so an edit is remove-then-add. If the add
             // then fails, the old entry goes back rather than leaving the host unregistered.
-            const previous = readClaudeEntries()[name];
-            if (previous != null) {
+            const previousEntries = readRawClaudeEntries();
+            const hadPrevious = Object.hasOwn(previousEntries, name);
+            const previous = previousEntries[name];
+            if (hadPrevious) {
                 const removed = runClaude(executable, ["mcp", "remove", name, "-s", "user"]);
                 if (removed.status === "unavailable") {
                     return removed;
@@ -135,9 +143,12 @@ export function createClaudeCodeTarget(): ConfigTarget {
             }
 
             const added = runClaude(executable, ["mcp", "add-json", name, toClaudeAddJsonPayload(entry), "-s", "user"]);
-            if (added.status === "unavailable" && previous != null) {
-                runClaude(executable, ["mcp", "add-json", name, toClaudeAddJsonPayload(previous), "-s", "user"]);
-                return { status: "unavailable", detail: `${added.detail}\n  the previous entry was restored` };
+            if (added.status === "unavailable" && hadPrevious) {
+                const restored = runClaude(executable, ["mcp", "add-json", name, JSON.stringify(previous), "-s", "user"]);
+                const recovery = restored.status === "written"
+                    ? "the previous entry was restored"
+                    : `could not restore the previous entry: ${restored.detail}`;
+                return { status: "unavailable", detail: `${added.detail}\n  ${recovery}` };
             }
 
             return added;

@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import { isRemotePathWithin } from "@/_libs";
-import { inspectRemotePath } from "@/modules/guard";
+import { inspectRemotePath, inspectLocalPath } from "@/modules/guard";
 
 import { createPolicy } from "./_helpers";
+
+it("protects the shared AKMS catalog from file transfers", () => {
+    for(const access of ["read", "write"] as const) {
+        expect(inspectLocalPath("/home/user/.akms/mcp/registry.json", access).allowed).toBe(false);
+    }
+});
 
 describe("isRemotePathWithin", () => {
     it("matches the prefix itself and its children", () => {

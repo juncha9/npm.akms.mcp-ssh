@@ -7,6 +7,7 @@ import { loadHostProfile } from "@/modules/config";
 import { SshSessionManager } from "@/modules/ssh";
 import { registerAllTools } from "@/modules/tools";
 import type { ToolContext } from "@/modules/tools";
+import { createCatalogServer } from "./modules/session-server";
 
 export interface SshMcpServerInstance {
     server: McpServer;
@@ -87,4 +88,26 @@ export function createSshMcpServer(): SshMcpServerInstance {
             sessions.closeAll();
         },
     };
+}
+
+/** Each catalog connection owns a session manager; session IDs cannot cross hosts. */
+export function createSshCatalogServer(file?: string) {
+    const logger = $logger.child({ context: "createSshCatalogServer" });
+    return createCatalogServer<{ profile: SshHostProfile; sessions: SshSessionManager }>({
+        kind: "ssh", identity: { name: SERVER_NAME, version: SERVER_VERSION }, file,
+        instructions: SERVER_INSTRUCTIONS.split("\n").slice(3).join("\n"),
+        create(env) {
+            const profile = loadHostProfile(env);
+            if(!profile) throw new Error("No SSH host is configured for this catalog connection.");
+            const sessions = new SshSessionManager();
+            sessions.startIdleSweeper();
+            return {
+                value: { profile, sessions },
+                summary: { description: profile.description, host: profile.host, port: profile.port, readonly: profile.policy.readonly },
+                shutdown() { sessions.stopIdleSweeper(); sessions.closeAll(); },
+            };
+        },
+        register: registerAllTools,
+        warn: (name, reason) => logger.warn("catalog connection skipped", { name, reason }),
+    });
 }

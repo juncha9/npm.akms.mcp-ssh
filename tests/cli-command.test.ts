@@ -32,6 +32,8 @@ function runCli(args: string[]) {
         }
         env[name] = value;
     }
+    env.AKMS_MCP_HOME = homeDirectory;
+    env.CODEX_HOME = path.join(homeDirectory, ".codex");
     env.HOME = homeDirectory;
     env.USERPROFILE = homeDirectory;
     env.APPDATA = path.join(homeDirectory, "AppData", "Roaming");
@@ -56,12 +58,12 @@ describe("CLI configuration command", () => {
         expect(result.stderr).not.toContain("setup");
     }, 15_000);
 
-    it("opens config on the requested client and quits without changing it", () => {
+    it("opens the menu without changing settings before registration", () => {
         const result = runCli(["config", "--target", "codex"]);
         expect(result.error).toBeUndefined();
         expect(result.status).toBe(0);
-        expect(result.stdout).toContain(configPath);
-        expect(result.stdout).toContain("No SSH hosts here yet");
+        expect(result.stdout).toContain("No AI services registered");
+        expect(result.stdout).toContain("Register");
         expect(fs.readFileSync(configPath, "utf8")).toBe(CONFIG_TEXT);
     }, 15_000);
 

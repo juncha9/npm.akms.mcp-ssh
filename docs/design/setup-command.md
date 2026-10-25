@@ -1,5 +1,9 @@
 # `config` command — design
 
+## Shared registration update
+
+`config` now manages a shared user catalog and applies changes to all services selected in `register`. Each package independently provides `register`, `config` and `sync`; the optional `akms-mcp` helper is not a dependency. The earlier Switch/Copy menus below describe the original target-specific manager, which remains an internal form adapter. Common registration code is bundled from `src/modules/registration`.
+
 Status: **implemented**, 2026-10-11. Updated for **0.1.5**, 2026-10-13: `config` is the only configuration command; the former `setup` command exits with code 1 and a reminder to use `config`.
 
 ## 🎯 Problem
@@ -97,7 +101,7 @@ tests, Git Bash's mintty without winpty — the same list is numbered and answer
 key or label. Both come from one `Prompter.select`, so the scripted tests drive the same
 menu a person sees. No prompt library: `@clack/prompts` and `@inquirer/prompts` each take
 over stdin with their own readline, which would fight the line reader the other prompts
-use, and every dependency is also downloaded by each `npx -y` launch of the server.
+use, and additional dependencies increase the installation footprint.
 
 ## 🔧 Rules
 
@@ -116,8 +120,11 @@ use, and every dependency is also downloaded by each `npx -y` launch of the serv
   A pinned key that no longer matches gets "[y/N]" — it is also what an impersonated host
   looks like.
 - **Secrets** are masked in the preview and shown in the print view, which exists to be copied.
-- **Windows** entries launch through `cmd /c npx -y @akms/mcp-ssh`, the wrapper Claude
-  Code prescribes for npx servers on native Windows.
+- **Runtime** entries use Node and the package's `lib/cli.js` under
+  `<AKMS_MCP_HOME or ~/.akms/mcp>/runtime`, including on Windows. Add/Edit install
+  a missing runtime and offer updates for older versions. Host-key saves check
+  installation before writing. Runtime provides updates and conversion of old
+  npx entries; clients must reconnect after conversion.
 
 ## 🗂️ Targets
 

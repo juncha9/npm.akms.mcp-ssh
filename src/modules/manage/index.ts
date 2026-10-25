@@ -1,9 +1,13 @@
+import type { Registry } from "../registration/registry";
+import { ManagedSession } from "../registration/menu";
+import type { ManagementMode } from "../registration/menu";
 import type { Readable, Writable } from "node:stream";
 
-import { SINGLE_HOST_ENV } from "@/_defs";
+import { SINGLE_HOST_ENV, SERVER_VERSION } from "@/_defs";
 import type { ConfigTarget, ConfigWriteResult, HostSetupAnswers, McpServerEntry } from "@/_types";
 
 import { profileFromEnv, runConnectionCheck } from "./connection-check";
+import { copyEntryToClient } from "./copy-entry";
 import { answersToEntry, entryToAnswers, isOurEntry, summarizeEntry } from "./entry";
 import { runHostForm } from "./host-form";
 import { PromptBackError, PromptClosedError, Prompter, displayWidth } from "./prompter";
@@ -31,6 +35,9 @@ export interface ConfigCommandOptions {
     targets?: ConfigTarget[];
     /** Client to open on; defaults to the first detected one. */
     targetId?: string;
+    registryPath?: string;
+    mode?: ManagementMode;
+    runtimeOptions?: Registry["runtimeOptions"]; management?: ManagedSession;
 }
 
 function errorMessage(error: unknown): string {
@@ -68,6 +75,7 @@ function indent(text: string): string {
 }
 
 function reportWrite(prompter: Prompter, result: ConfigWriteResult, action: string): void {
+    prompter.clearScreen();
     if (result.status === "written") {
         prompter.write(`  ${prompter.paint.success(action)} ${prompter.paint.dim(result.detail)}\n`);
         prompter.write(prompter.paint.dim("  Restart the client (or reconnect it from its MCP menu) to pick up the change.\n\n"));
@@ -88,6 +96,7 @@ async function addOrEditHost(
     target: ConfigTarget,
     entries: Record<string, McpServerEntry>,
     existingName?: string,
+    management?: ManagedSession,
 ): Promise<void> {
     let existing: HostSetupAnswers | undefined;
     if (existingName != null) {
@@ -101,17 +110,20 @@ async function addOrEditHost(
     });
     if (answers == null) {
         output.write("  Cancelled — nothing was written.\n\n");
+        await prompter.acknowledge();
         return;
     }
 
     let entry = answersToEntry(answers);
+    entry = target.prepareEntry?.(answers.name, entry, existingName) ?? entry;
     for (;;) {
+        prompter.clearScreen();
         output.write(`\n  ${prompter.paint.dim(`This goes into ${target.location}:`)}\n\n`);
         output.write(`${indent(formatForTarget(target, answers.name, maskSecrets(entry)))}\n\n`);
 
         let confirmed: boolean;
         try {
-            confirmed = await prompter.askYesNo("Write it?", true);
+            confirmed = await prompter.askYesNo(target.id === "registered" ? "Save and apply to all registered services?" : "Write it?", true);
         }
         catch (ex) {
             if (ex instanceof PromptBackError == false) {
@@ -127,31 +139,36 @@ async function addOrEditHost(
             });
             if (revised == null) {
                 output.write("  Cancelled — nothing was written.\n\n");
+                await prompter.acknowledge();
                 return;
             }
 
             answers = revised;
             entry = answersToEntry(answers);
+            entry = target.prepareEntry?.(answers.name, entry, existingName) ?? entry;
             continue;
         }
 
         if (confirmed == false) {
             output.write("  Not written. Pick the host and choose Print to get the entry ready to paste.\n\n");
+            await prompter.acknowledge();
             return;
         }
 
         break;
     }
 
-    const written = target.writeEntry(answers.name, entry);
+    const written = (existingName && existingName !== answers.name && target.renameEntry ? target.renameEntry(existingName, answers.name, entry) : target.writeEntry(answers.name, entry));
     reportWrite(prompter, written, "Written");
 
-    if (written.status === "written" && existingName != null && existingName !== answers.name) {
+    if (written.status === "written" && existingName != null && existingName !== answers.name && !target.renameEntry) {
         const removed = target.removeEntry(existingName);
         if (removed.status === "unavailable") {
             output.write(`  The old name ${existingName} is still there: ${removed.detail}\n\n`);
         }
     }
+    if(written.status === "written") await management?.checkSaved(prompter, answers.name, existingName ? entries[existingName] : undefined);
+    await prompter.acknowledge();
 }
 
 /** Connects with a stored entry, and offers to pin an unpinned key by adding just that line. */
@@ -161,16 +178,19 @@ async function checkHost(
     target: ConfigTarget,
     name: string,
     entry: McpServerEntry,
+    management?: ManagedSession,
 ): Promise<void> {
     output.write("\n");
     const profile = profileFromEnv(output, entry.env);
     if (profile == null) {
         output.write("\n");
+        await prompter.pause();
         return;
     }
 
     const result = await runConnectionCheck(profile, output);
     output.write("\n");
+    await prompter.pause();
 
     if (result.connected == false) {
         return;
@@ -196,8 +216,10 @@ async function checkHost(
     }
 
     if (changed == true) {
+        if(management && !await management.prepareRuntime(prompter, entry)) return;
         const written = target.writeEntry(name, { ...entry, env: env });
         reportWrite(prompter, written, "Pinned");
+        await prompter.acknowledge();
     }
 }
 
@@ -238,8 +260,10 @@ async function manageHost(
     prompter: Prompter,
     output: Writable,
     target: ConfigTarget,
+    targets: ConfigTarget[],
     entries: Record<string, McpServerEntry>,
     name: string,
+    management?: ManagedSession,
 ): Promise<void> {
     const action = await prompter.select(
         name,
@@ -247,25 +271,37 @@ async function manageHost(
             { value: "edit", key: "e", label: "Edit", hint: "open its settings" },
             { value: "check", key: "c", label: "Check the connection", hint: "connect now and offer to pin the host key" },
             { value: "print", key: "p", label: "Print the entry", hint: "JSON, Codex TOML and a claude command, ready to paste" },
+            ...targets.some((candidate) => candidate.id !== target.id)
+                ? [{ value: "copy", key: "o", label: "Copy to another client", hint: "keep this entry and copy its settings" }]
+                : [],
             { value: "remove", key: "r", label: "Remove", hint: `from ${target.label}` },
             { separator: true },
             { value: "back", key: "b", label: "Back" },
         ],
         { defaultValue: "edit", cancelValue: "back" },
     );
+    prompter.clearScreen();
 
-    if (action === "edit") {
-        await addOrEditHost(prompter, output, target, entries, name);
+    if(action === "edit") {
+        if(management && !await management.prepareRuntime(prompter, entries[name])) return;
+        await addOrEditHost(prompter, output, target, entries, name, management);
         return;
     }
 
     if (action === "check") {
-        await checkHost(prompter, output, target, name, entries[name]);
+        await checkHost(prompter, output, target, name, entries[name], management);
         return;
     }
 
     if (action === "print") {
         printHost(prompter, name, entries[name]);
+        await prompter.acknowledge();
+        return;
+    }
+
+    if (action === "copy") {
+        await copyEntryToClient(prompter, target, targets, name, entries[name]);
+        await prompter.acknowledge();
         return;
     }
 
@@ -273,18 +309,19 @@ async function manageHost(
         const remove = await prompter.askYesNo(`Remove ${name} from ${target.location}?`, false);
         if (remove == true) {
             reportWrite(prompter, target.removeEntry(name), "Removed");
+            await prompter.acknowledge();
         }
     }
 }
 
 /**
  * `akms-mcp-ssh config` — an interactive manager for the SSH hosts registered in an MCP
- * client's config. The hosts themselves are the menu: pick one to edit, check, print or
+ * client's config. The hosts themselves are the menu: pick one to edit, check, copy, print or
  * remove it, or pick an action below them. The `SSH_*` names never have to be typed.
  *
  * @returns Process exit code.
  */
-export async function runConfigCommand(options: ConfigCommandOptions): Promise<number> {
+export async function runTargetConfigCommand(options: ConfigCommandOptions): Promise<number> {
     const { input, output } = options;
     const targets = options.targets ?? listConfigTargets();
 
@@ -302,7 +339,8 @@ export async function runConfigCommand(options: ConfigCommandOptions): Promise<n
     const paint = prompter.paint;
 
     try {
-        for (;;) {
+        if(options.management && !await options.management.initialize(prompter)) return 0;
+        for(;;) {
             let entries: Record<string, McpServerEntry> = {};
             let names: string[] = [];
             let readError: string | null = null;
@@ -316,7 +354,11 @@ export async function runConfigCommand(options: ConfigCommandOptions): Promise<n
             }
 
             // (1) Where we are
-            output.write(`\n${paint.bold(target.label)}  ${paint.dim(target.location)}\n`);
+            prompter.clearScreen();
+            if(options.management) {
+                output.write(paint.bold("SSH connections") + "\n");
+                options.management.writeStatus(prompter);
+            } else output.write(`\n${paint.bold(target.label)}  ${paint.dim(target.location)}\n`);
             if (readError != null) {
                 output.write(`  Cannot read it: ${readError}\n  Fix the file by hand, or switch to another client.\n`);
             }
@@ -347,6 +389,7 @@ export async function runConfigCommand(options: ConfigCommandOptions): Promise<n
                 }
                 items.push({ value: "switch", key: "t", label: "Switch client", hint: switchHint });
             }
+            if(options.management) { options.management.decorate(items); items.push(...options.management.items()); }
             items.push({ value: "quit", key: "q", label: "Quit" });
 
             let question = "No SSH hosts here yet";
@@ -368,7 +411,10 @@ export async function runConfigCommand(options: ConfigCommandOptions): Promise<n
                 return 0;
             }
 
-            if (picked === "switch") {
+            prompter.clearScreen();
+            if(options.management && await options.management.handle(picked, prompter)) continue;
+
+            if(picked === "switch") {
                 const switched = await prompter.select(
                     "Which client?",
                     targets.map((candidate) => {
@@ -387,12 +433,12 @@ export async function runConfigCommand(options: ConfigCommandOptions): Promise<n
             // (3) Act — a failure is reported and the menu comes back, rather than exiting
             try {
                 if (picked === "add") {
-                    await addOrEditHost(prompter, output, target, entries);
+                    await addOrEditHost(prompter, output, target, entries, undefined, options.management);
                     continue;
                 }
 
                 if (picked.startsWith(HOST_VALUE_PREFIX) == true) {
-                    await manageHost(prompter, output, target, entries, picked.slice(HOST_VALUE_PREFIX.length));
+                    await manageHost(prompter, output, target, targets, entries, picked.slice(HOST_VALUE_PREFIX.length), options.management);
                 }
             }
             catch (ex) {
@@ -405,6 +451,7 @@ export async function runConfigCommand(options: ConfigCommandOptions): Promise<n
                     continue;
                 }
                 output.write(`  Failed: ${errorMessage(ex)}\n\n`);
+                await prompter.acknowledge();
             }
         }
     }
@@ -419,4 +466,10 @@ export async function runConfigCommand(options: ConfigCommandOptions): Promise<n
     finally {
         prompter.close();
     }
+}
+
+/** Independent registration and shared connection management; never invokes @akms/mcp. */
+export async function runConfigCommand(options: ConfigCommandOptions): Promise<number> {
+    const management = new ManagedSession({ kind: "ssh", version: SERVER_VERSION, targets: options.targets ?? listConfigTargets(), registryPath: options.registryPath, mode: options.mode, targetId: options.targetId, runtimeOptions: options.runtimeOptions });
+    return runTargetConfigCommand({ ...options, targets: [management.target], targetId: undefined, management });
 }

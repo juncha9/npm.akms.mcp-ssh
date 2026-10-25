@@ -3,13 +3,15 @@ import net from "node:net";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { PassThrough } from "node:stream";
 
 import ssh2 from "ssh2";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SshHostProfile } from "@/_types";
 import { SshConnection } from "@/modules/ssh";
 import { expandProxyCommand } from "@/modules/ssh/ssh-connection";
+import { runConnectionCheck } from "@/modules/manage/connection-check";
 
 import { createPolicy } from "./_helpers";
 
@@ -147,6 +149,10 @@ beforeEach(() => {
     acceptJumpLogin = true;
 });
 
+afterEach(() => {
+    vi.unstubAllEnvs();
+});
+
 function createProfile(overrides?: Partial<SshHostProfile>): SshHostProfile {
     return {
         name: "routed",
@@ -191,6 +197,23 @@ describe("expandProxyCommand", () => {
 });
 
 describe("jump host route", () => {
+    it.each([true, false])("shows target authentication only after the jump host accepts the connection (%s)", async (accepted) => {
+        vi.stubEnv("TERM", "xterm");
+        acceptJumpLogin = accepted;
+        const output = Object.assign(new PassThrough(), { isTTY: true, columns: 80 });
+        let screen = "";
+        output.on("data", (chunk: Buffer) => { screen += chunk.toString(); });
+
+        const result = await runConnectionCheck(createProfile({ jump: jumpProfile() }), output);
+        expect(result.connected).toBe(accepted);
+        expect(screen).toContain("Jump host connection and forwarding");
+        expect(screen.includes("SSH handshake and authentication")).toBe(accepted);
+        expect(screen).toContain(accepted ? "OK      tester@" : "FAILED  tester@");
+        const completed = screen;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(screen).toBe(completed);
+    });
+
     it("reaches the target through the jump host's forwarded channel", async () => {
         const stdout = await execOnce(createProfile({ jump: jumpProfile() }), "uname -a");
 

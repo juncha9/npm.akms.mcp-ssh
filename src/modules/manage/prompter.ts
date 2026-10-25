@@ -188,7 +188,7 @@ function groupLabelWidths<T extends string>(items: SelectItem<T>[]): number[] {
  * Legacy Windows consoles render `❯` / `✔` as boxes; Windows Terminal, the VS Code
  * terminal and every non-Windows terminal draw them. Same rule inquirer's `figures` uses.
  */
-function supportsUnicode(): boolean {
+export function supportsUnicode(): boolean {
     if (process.platform !== "win32") {
         return true;
     }
@@ -307,6 +307,20 @@ export class Prompter {
         this.input.pause();
     }
 
+    /** Available content columns, leaving room for the terminal cursor. */
+    get width(): number { return this.columns() - 1; }
+
+    /** Start a fresh terminal page without erasing scrollback or emitting ANSI to pipes. */
+    clearScreen(): void {
+        if(this.interactive) this.output.write(`${ESC}[2J${ESC}[H`);
+    }
+
+    /** Keep results visible before navigating; Esc acknowledges them like Enter. */
+    async acknowledge(): Promise<void> {
+        try { await this.pause(); }
+        catch(error) { if(!(error instanceof PromptBackError)) throw error; }
+    }
+
     write(text: string): void {
         this.output.write(text);
     }
@@ -314,6 +328,19 @@ export class Prompter {
     /** Styling for callers that print around the prompts; plain text off a TTY. */
     get paint(): Style {
         return this.style;
+    }
+
+    /** Keeps a report visible until Enter on a TTY; Esc goes back. Pipes need no extra answer. */
+    async pause(): Promise<void> {
+        if (this.interactive == false) {
+            return;
+        }
+        if (this.inputEnded == true) {
+            throw new PromptClosedError();
+        }
+
+        const prompt = this.fitLine([{ text: "Press Enter to continue", paint: this.style.dim }], this.columns() - 1);
+        await this.readText(prompt, false);
     }
 
     /**

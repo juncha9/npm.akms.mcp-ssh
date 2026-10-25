@@ -4,6 +4,7 @@ import { SINGLE_HOST_ENV } from "@/_defs";
 import type { SshHostProfile } from "@/_types";
 import { loadHostProfile } from "@/modules/config";
 import { SshConnection } from "@/modules/ssh";
+import { CheckProgress } from "./check-progress";
 
 export interface ConnectionCheckResult {
     connected: boolean;
@@ -75,13 +76,22 @@ export async function runConnectionCheck(profile: SshHostProfile, output: Writab
     output.write("\n");
 
     const connection = new SshConnection(profile);
+    const progress = new CheckProgress(output);
     const startedAt = Date.now();
 
     let connected = false;
     let detail = "";
 
     try {
-        await connection.connect();
+        progress.start("Preparing SSH connection");
+        await connection.connect((stage) => {
+            if (stage === "transport") {
+                progress.start(profile.jump != null ? "Jump host connection and forwarding" : "Starting proxy connection");
+            }
+            else {
+                progress.start("SSH handshake and authentication");
+            }
+        });
         connected = true;
     }
     catch (ex) {
@@ -91,6 +101,7 @@ export async function runConnectionCheck(profile: SshHostProfile, output: Writab
         }
     }
     finally {
+        progress.finish(connected);
         connection.disconnect();
     }
 

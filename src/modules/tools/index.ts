@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { connectionTools } from "../session-server";
 
 import { registerExecTools } from "./exec-tools";
 import { registerFileTools } from "./file-tools";
@@ -30,7 +31,8 @@ export {
 } from "./format";
 
 /** Registers every tool this server exposes, in the order the model should discover them. */
-export function registerAllTools(server: McpServer, context: ToolContext): void {
+export function registerAllTools(server: McpServer, context: ToolContext, connection?: string): void {
+    server = connectionTools(server, connection);
     registerHostTools(server, context);
     registerSessionTools(server, context);
     registerExecTools(server, context);

@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import path from "node:path";
+import { updateConfigFile } from "./config-file";
 
 import type { ConfigTarget, ConfigTargetId, McpServerEntry } from "@/_types";
 
@@ -19,7 +19,7 @@ export function toMcpServerEntry(value: unknown): McpServerEntry | null {
         args = (record.args as unknown[]).filter((item): item is string => typeof item === "string");
     }
 
-    const env: Record<string, string> = {};
+    const env: Record<string, string> = Object.create(null);
     if (typeof record.env === "object" && record.env != null) {
         for (const [key, item] of Object.entries(record.env as Record<string, unknown>)) {
             if (typeof item === "string") {
@@ -36,24 +36,29 @@ export function toMcpServerEntry(value: unknown): McpServerEntry | null {
  *
  * @throws {Error} If the document is not an object.
  */
-export function readMcpServersJson(document: unknown): Record<string, McpServerEntry> {
-    if (typeof document !== "object" || document == null || Array.isArray(document) == true) {
+export function readRawMcpServersJson(document: unknown): Record<string, unknown> {
+    if (typeof document !== "object" || document == null || Array.isArray(document)) {
         throw new Error("the config file is not a JSON object");
     }
-
-    const entries: Record<string, McpServerEntry> = {};
     const servers = (document as Record<string, unknown>).mcpServers;
-    if (typeof servers !== "object" || servers == null) {
-        return entries;
+    if (servers === undefined) {
+        return {};
     }
+    if (typeof servers !== "object" || servers == null || Array.isArray(servers)) {
+        throw new Error("mcpServers is not a JSON object");
+    }
+    return servers as Record<string, unknown>;
+}
 
-    for (const [name, value] of Object.entries(servers as Record<string, unknown>)) {
+/** Reads supported stdio entries; raw names are checked separately before copying. */
+export function readMcpServersJson(document: unknown): Record<string, McpServerEntry> {
+    const entries: Record<string, McpServerEntry> = Object.create(null);
+    for (const [name, value] of Object.entries(readRawMcpServersJson(document))) {
         const entry = toMcpServerEntry(value);
         if (entry != null) {
             entries[name] = entry;
         }
     }
-
     return entries;
 }
 
@@ -62,12 +67,12 @@ export function readMcpServersJson(document: unknown): Record<string, McpServerE
  *
  * @throws {Error} If the file exists but is not valid JSON — it is never written over.
  */
-function readDocument(filePath: string): Record<string, unknown> {
-    if (fs.existsSync(filePath) == false) {
+function readDocument(filePath: string, contents?: string): Record<string, unknown> {
+    if (contents == null && fs.existsSync(filePath) == false) {
         return {};
     }
 
-    const text = fs.readFileSync(filePath, "utf8");
+    const text = contents ?? fs.readFileSync(filePath, "utf8");
     if (text.trim() === "") {
         return {};
     }
@@ -103,11 +108,6 @@ export function createJsonFileTarget(options: {
 }): ConfigTarget {
     const { id, label, filePath } = options;
 
-    function writeDocument(document: Record<string, unknown>): void {
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        fs.writeFileSync(filePath, `${JSON.stringify(document, null, 4)}\n`, "utf8");
-    }
-
     return {
         id: id,
         label: label,
@@ -119,32 +119,29 @@ export function createJsonFileTarget(options: {
             return readMcpServersJson(document);
         },
 
+        hasEntry(name: string): boolean {
+            return Object.hasOwn(readRawMcpServersJson(readDocument(filePath)), name);
+        },
+
         writeEntry(name: string, entry: McpServerEntry) {
-            const document = readDocument(filePath);
-
-            let servers = document.mcpServers;
-            if (typeof servers !== "object" || servers == null || Array.isArray(servers) == true) {
-                servers = {};
-            }
-
-            (servers as Record<string, unknown>)[name] = entry;
-            document.mcpServers = servers;
-            writeDocument(document);
+            updateConfigFile(filePath, (contents) => {
+                const document = readDocument(filePath, contents);
+                const servers = Object.assign(Object.create(null), readRawMcpServersJson(document));
+                servers[name] = entry;
+                document.mcpServers = servers;
+                return JSON.stringify(document, null, 4) + "\n";
+            });
 
             return { status: "written" as const, detail: filePath };
         },
 
         removeEntry(name: string) {
-            const document = readDocument(filePath);
-
-            const servers = document.mcpServers;
-            if (typeof servers !== "object" || servers == null || Array.isArray(servers) == true) {
-                return { status: "written" as const, detail: filePath };
-            }
-
-            delete (servers as Record<string, unknown>)[name];
-            writeDocument(document);
-
+            updateConfigFile(filePath, (contents) => {
+                const document = readDocument(filePath, contents);
+                const servers = readRawMcpServersJson(document);
+                delete servers[name];
+                return JSON.stringify(document, null, 4) + "\n";
+            });
             return { status: "written" as const, detail: filePath };
         },
     };

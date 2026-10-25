@@ -10,7 +10,7 @@ import ssh2 from "ssh2";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { ConfigTarget, McpServerEntry } from "@/_types";
-import { runConfigCommand } from "@/modules/manage";
+import { runTargetConfigCommand as runConfigCommand } from "@/modules/manage";
 import { createJsonFileTarget } from "@/modules/manage/targets/json-file";
 import { toHostKeyFingerprint } from "@/modules/ssh/ssh-connection";
 

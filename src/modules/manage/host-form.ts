@@ -528,11 +528,13 @@ async function testConnection(prompter: Prompter, output: Writable, state: FormS
     if (profile == null) {
         output.write("\n");
         state.lastTest = "failed";
+        await prompter.pause();
         return false;
     }
 
     const result = await runConnectionCheck(profile, output);
     output.write("\n");
+    await prompter.pause();
 
     if (result.connected == true) {
         if (result.hostKeyFingerprint != null && state.answers.hostKeyFingerprint == null) {

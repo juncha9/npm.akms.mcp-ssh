@@ -19,6 +19,10 @@ import type { CommandRule } from "./command-rules";
  */
 export const PROTECTED_LOCAL_PATH_RULES: CommandRule[] = [
     {
+        pattern: /(^|\/)\.akms\/mcp(\/|$)/i,
+        reason: "AKMS connection credentials and guard configuration",
+    },
+    {
         pattern: /(^|\/)\.ssh(\/|$)/i,
         reason: "SSH key directory",
     },

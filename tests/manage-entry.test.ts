@@ -31,17 +31,16 @@ describe("answersToEntry — what gets written", () => {
         expect(entry.env).toEqual({ SSH_HOST: "10.0.0.5", SSH_USER: "deploy" });
     });
 
-    it("launches the package through npx, behind cmd /c on Windows", () => {
+    it("creates a direct installed launch without npx", () => {
         const entry = answersToEntry(createAnswers());
-
-        if (process.platform === "win32") {
-            expect(entry.command).toBe("cmd");
-            expect(entry.args).toEqual(["/c", "npx", "-y", "@akms/mcp-ssh"]);
-        }
-        else {
-            expect(entry.command).toBe("npx");
-            expect(entry.args).toEqual(["-y", "@akms/mcp-ssh"]);
-        }
+        expect(entry.command).not.toBe("npx");
+        expect(entry.command).not.toBe("cmd");
+        expect(entry.args).not.toContain("npx");
+        expect(isOurEntry(entry)).toBe(true);
+        if(entry.args.length) {
+            expect(entry.command).toBe(process.execPath);
+            expect(entry.args[0].replace(/\\/g, "/")).toMatch(/node_modules\/@akms\/mcp-ssh\/lib\/cli\.js$/);
+        } else expect(entry.command).toBe("akms-mcp-ssh");
     });
 
     it("writes every answered setting under its variable", () => {

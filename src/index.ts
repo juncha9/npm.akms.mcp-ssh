@@ -1,4 +1,4 @@
-export { createSshMcpServer } from "./server";
+export { createSshMcpServer, createSshCatalogServer } from "./server";
 export type { SshMcpServerInstance } from "./server";
 
 export { loadHostProfile, toHostSummary } from "./modules/config";

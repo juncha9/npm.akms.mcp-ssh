@@ -1,6 +1,6 @@
 {
     "name": "@akms/mcp-ssh",
-    "version": "0.1.6",
+    "version": "0.2.1",
     "description": "MCP server that lets an AI agent run shell commands and transfer files on one pre-registered SSH host, with every command and path screened by a guard policy.",
     "keywords": [],
     "license": "MIT",
@@ -34,6 +34,7 @@
     "files": [
         "lib",
         "README.md",
+        "CHANGELOG.md",
         "LICENSE.md"
     ],
     "engines": {
@@ -43,6 +44,7 @@
         "access": "public"
     },
     "scripts": {
+        "prepublishOnly": "node scripts/release-guard.mjs",
         "build": "tsc --noEmit && rimraf ./lib && tsup",
         "watch": "tsc --noEmit && tsup --watch",
         "dev": "tsx ./src/cli.ts",
@@ -53,6 +55,7 @@
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^1.30.0",
+        "smol-toml": "1.9.1",
         "ssh2": "^1.17.0",
         "zod": "^4.4.3"
     },

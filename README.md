@@ -6,73 +6,149 @@ MCP server that lets an AI agent run shell commands and transfer files on a remo
 
 The host is **pre-registered** in the server's own environment; the agent never receives a hostname, key or password as an argument, and no tool takes one. Every command and path is screened against the guard policy before anything reaches the network.
 
+Use **session server mode** to share one process among this kind's connections in each client session. Each connection keeps its own target, credentials and policy; its tool names carry the connection prefix. The environment-based examples below describe individual mode. See [Session server mode](#session-server-mode).
+
 ## 📦 Installation
 
 Requires Node.js 18 or later.
 
 ```bash
-npm install -g @akms/mcp-ssh   # installs the `akms-mcp-ssh` command
-npx -y @akms/mcp-ssh --help    # or run it straight from the registry
+npm install -g @akms/mcp-ssh@latest   # installs the `akms-mcp-ssh` command
+akms-mcp-ssh --help
 akms-mcp-ssh --version        # show the installed version
 ```
 
+## Minimum working configuration
+
+Install the server from **Runtime** before using these manual examples. On Windows its script is `<AKMS_MCP_HOME or ~/.akms/mcp>/runtime/node_modules/@akms/mcp-ssh/lib/cli.js`; on macOS/Linux insert `lib/` before `node_modules`. Replace the placeholder below with that absolute path. Use the Node executable from `node -p "process.execPath"` as `command`. The `config` command writes both paths for you.
+
+For a direct SSH connection using a private key, use this MCP client entry. Replace the host, user and key path with your own. The SSH server must be reachable on port `22`, and the matching public key must already be authorized for that user.
+
+```json
+{
+    "mcpServers": {
+        "ssh": {
+            "command": "node",
+            "args": ["/absolute/akms/mcp/runtime/node_modules/@akms/mcp-ssh/lib/cli.js"],
+            "env": {
+                "SSH_HOST": "ssh.example.com",
+                "SSH_USER": "deploy",
+                "SSH_KEY": "~/.ssh/id_ed25519"
+            }
+        }
+    }
+}
+```
+
+`SSH_HOST` and `SSH_USER` are required. The example also supplies authentication explicitly: `SSH_KEY` must point to an existing private key file; add `SSH_PASSPHRASE` if it is encrypted. For password authentication, replace `SSH_KEY` with `SSH_PASSWORD`. Omit both only when the MCP process can access an SSH agent with an authorized key (`SSH_AUTH_SOCK`, or the OpenSSH agent on Windows). No default key file or `~/.ssh/config` is loaded automatically.
+
+`SSH_PORT` defaults to `22`; jump-host and proxy settings are optional. Writes are allowed by default; add `"SSH_READONLY": "true"` for a read-only entry.
+
+The JSON example fits an MCP client's `mcpServers` configuration, such as a project `.mcp.json` or Cursor's `mcp.json`. The direct Node command also works on Windows. For Codex TOML, open Register from `akms-mcp-ssh config --target codex` (or choose another client below).
+
 ## ⚙️ MCP client setup
 
-**Let the CLI write it.** `config` opens a small manager for the hosts registered in a client's config. It asks plain questions — host, user, key or password, jump host, read-only — tests the connection, offers to pin the host key, and writes the entry. No `SSH_*` name has to be remembered.
+Register the AI services you use once, then manage connections in one shared list. **This package works independently; installing or running `@akms/mcp` is optional.**
 
-```bash
-npx -y @akms/mcp-ssh config                   # opens on the first client found on this machine
-npx -y @akms/mcp-ssh config --target codex    # claude-code | codex | claude-desktop | cursor
+```sh
+akms-mcp-ssh register   # toggle services, then Apply registration
+akms-mcp-ssh config     # add, edit, check, print or remove connections
+akms-mcp-ssh sync       # review differences and retry pending changes
 ```
 
-Starting in **0.1.5**, `config` is the only configuration command. Update scripts and shortcuts to use `akms-mcp-ssh config`; `--target` works as before. The former `setup` command exits with code 1 and a reminder to use `config`.
+### AKMS runtime and existing connections
 
-```
-Claude Code (user scope)  /home/me/.claude.json
+Managed connections start Node directly using a dedicated installation at `<AKMS_MCP_HOME or ~/.akms/mcp>/runtime`. This directory is independent of Node version managers. The setup CLI may be installed globally as above or opened once with `npx -y @akms/mcp-ssh@latest config`; it is separate from the server runtime saved in client settings.
 
-? 1 SSH host — pick it to manage it
-❯ ssh-prod  deploy@10.0.0.5:22  key · readonly, pinned
-  ────────────────────────
-  Add a host
-  Switch client  also found: Codex CLI
-  Quit
-↑↓ move · enter select · esc back
-```
+Before Add or a standard-launch Edit, setup installs a missing runtime with `npm install --global --prefix "<AKMS runtime directory>" --prefer-online --no-fund --no-audit @akms/mcp-ssh@latest`. If the installed version is older than this setup package, it offers an update (default Yes); declining continues with the installed version. Linked development packages skip this prompt. Host-key saves for standard launches also check the runtime before writing. Custom launch commands keep their existing command and require no managed-runtime installation. If an update fails but an installed runtime is still usable, setup reports the error and continues with that version. Servers do not invoke npm or query updates when AI clients connect.
 
-The hosts are the menu: pick one to edit, check, print or remove it. Adding or editing a host opens a settings form — every setting listed with its value, picked and changed in any order, with **Test the connection** and **Save** below. Choose a private key from the keys found in `~/.ssh`, and a route: directly, through a jump host, through a proxy command, or through both.
+To migrate existing entries, open `akms-mcp-ssh config`, choose **Runtime**, install the runtime if needed, then choose **Use for existing connections**. Both legacy npx entries and direct paths in ordinary global installations can be converted. Review and apply the list, then **restart or reconnect the AI clients** to replace running processes. Connection values and credentials stay intact; custom commands and external client edits are preserved for individual review. Register/import legacy entries first if they are missing from the shared list. Version-pinned npx entries switch to the installed version shown in the preview.
 
-On an interactive terminal:
+**Runtime > Update runtime installation** explicitly installs the latest release into this same directory. The Node executable keeps its existing alias path, allowing nvm-windows to switch Node versions while the package path stays fixed. If the Node command path or `AKMS_MCP_HOME` moves, reapply current paths from Runtime. Removing the runtime directory breaks entries that use it.
 
-| Keys | Action |
-|---|---|
-| ↑ / ↓, Enter | Move through a menu and select a setting or action |
-| Esc | Go back one level; inside a field or choice, return to the form with that setting unchanged |
-| ← / →, Home / End | Move the cursor within text being entered |
-| Backspace / Delete, Ctrl+U | Delete characters or clear the current input line |
-| Enter with no input | Keep the displayed value; enter `-` to clear an optional value |
-| Ctrl+C / Ctrl+D | Exit configuration |
+For development, build the checkout and link it with `npm install -g --prefix "<AKMS runtime directory>" "<checkout path>"`. Linked packages retain the runtime alias path; automatic updates do not overwrite the checkout link. See [README_DEV.md](README_DEV.md). `@akms/mcp` remains optional.
 
-Esc also undoes a choice when pressed in its follow-up question: choosing a jump route and then pressing Esc at the jump-host prompt restores the previous route. Esc at the **Write it?** preview reopens the form with the entered values. Leaving a changed form with Cancel or Esc asks whether to discard changes.
+`config` always shows the connection menu, including Add, Register, Sync, Import and Runtime. With no registered services, Add displays a message asking you to open Register and returns to the menu without opening a form or changing settings. Claude Code, Codex, Claude Desktop and Cursor are supported; Enter toggles each service and Apply saves the selection. `--target codex` preselects Codex in Register; it does not restrict subsequent saves to Codex.
 
-Without an interactive terminal (a pipe, or Git Bash's mintty without winpty), the same menus use numbered choices; enter a number, key or label followed by Enter. After saving, restart the MCP client or reconnect the server from its MCP menu to load the updated entry.
+On an interactive terminal, connection menus, registration and comparisons use separate screens. Results and errors stay visible until Enter or Esc; returning to the menu shows current services and any connections needing attention. Piped commands keep plain output and need no extra answers. Sync labels the saved AKMS version and the current service version separately. Numbered choices show which service receives a value or whether it becomes the AKMS value for all registered services. Long values wrap, changed text is highlighted, and confirmation names the destinations.
+
+Service selection is shared across the AKMS packages. Every saved connection is applied to all registered services, and a newly registered service receives existing shared connections. Unregistering removes only entries managed by AKMS from that service and retains the shared catalog. Restart or reconnect the MCP client to load changed settings.
+
+### Startup checks and updates
+
+After saving a changed connection, applying Runtime launch commands, or updating from **Updates**, setup starts each distinct saved command once without shell interpolation. It sends MCP `initialize` and `tools/list`, then closes stdin; it does not invoke database, SSH, WSL or S3 tools. The check takes at most about 10 seconds per entry, plus bounded process cleanup. Results show the server version and tool count, or the exit code and masked stderr tail. Standard runtime script paths and spawn command paths stay visible for diagnosis. Session checks also verify a tool-name prefix for every saved connection. A failed check keeps the saved settings: fix it before restarting or reconnecting AI clients. Identical command/arguments/environment values share one check.
+
+Open **Updates** in the launcher or any package config menu to see installed and latest published runtime versions. Version lookup runs only when this screen opens or **Refresh versions** is chosen, with a short timeout; offline results show **Unavailable**. Update one runtime or all installed runtimes with newer releases; missing runtimes can be installed individually. Development links are displayed but never updated, and WSL is listed only on Windows. Updates use the same dedicated AKMS runtime directory and check that kind's saved connections afterward. Reconnect your AI clients to use the new runtime. The helper itself is not updated here.
+
+Register confirmation defaults to **No** when deselecting a previously registered service; otherwise it defaults to **Yes**.
+
+### Session server mode
+
+New catalogs start in version 2 with session mode enabled. Register your AI services, then add connections; setup creates each kind's session entry automatically. Existing version 1 catalogs keep individual mode until you approve **Migrate registry** or a per-kind **Runtime > Switch to session server** conversion (default No). Register/import their existing connections first. Each registered AI service gets one `akms_db`, `akms_ssh`, `akms_wsl` or `akms_s3` entry for that kind, running Node directly with `--catalog`. The helper package is optional. A client session still owns its own stdio process; connections of the same kind share that process.
+
+The server reads its connections from the shared catalog at startup. Tools include the connection name, for example `production__db_query`; their arguments stay unchanged. Add/Edit/Remove updates the catalog; reconnect your clients to load changes. Removing the last connection removes the session entry. An invalid connection is excluded while valid ones remain available; `<kind>_catalog_status` reports the loaded/excluded names without credentials. No database, SSH, WSL or S3 connection opens just to list tools.
+
+Converting an existing version 1 catalog upgrades it to version 2 and keeps the previous revision. Older setup packages stop without modifying version 2. New kinds in a new catalog also default to sessions; each kind's explicit rollback choice is retained. AKMS removes managed individual entries only after verifying the session entry; external edits stay for **Sync** review. Custom launch commands are retained in the catalog for rollback but are not executed in session mode.
+
+**Runtime > Switch back to per-connection entries** previews and restores the saved individual entries, including their credentials and launch commands. It removes the session entry after the replacements are verified. The registry stays version 2. **Reapply session launch command** updates paths after moving Node or the runtime. Restart/reconnect clients after either change.
+
+Connection names use ASCII letters, digits, underscores or hyphens: DB up to 35 characters, SSH/WSL 30, S3 37. The four `akms_<kind>` names are reserved. These limits keep client-prefixed tool names within 64 characters; rename longer legacy entries before conversion.
+
+### Migrate an older registry
+
+When a version 1 registry or a version 2 registry without a default-mode marker is opened, the helper and each config menu show **Registry update available** and **Migrate registry**. Select it to review the ordered format steps, every kind's current layout, per-service additions/removals, and settings kept for Sync. Approval defaults to **No**.
+
+Migration upgrades v1 to v2, records `defaultMode: "catalog"`, and converts individual kinds through the existing session conversion rules. Kinds explicitly switched back to individual entries keep that choice. Already bundled kinds keep their launch commands; an unmarked v2 containing only bundles receives the marker without client-file changes. Missing runtimes leave existing entries in place for **Runtime** installation and **Sync**. Startup checks verify the affected session tools after approval.
+
+One `registry.previous.json` revision covers the whole migration. Repeating migration on a current registry does nothing. Runtime still offers per-kind conversion and rollback. **Runtime > Use individual entries for new kinds** turns the future-kind default off, and **Start new kinds as session servers** turns it back on; existing kinds retain their modes. The explicit `individual` default is also current format, so turning it off does not trigger another migration notice.
+
+### Catalog security
+
+The shared catalog is `~/.akms/mcp/registry.json`, or `$AKMS_MCP_HOME/registry.json`. It contains complete connection settings, including passwords and secret values **in plaintext**. In individual mode these values also appear in AI client entries. After successful session-mode conversion and resolution of any retained legacy entries, the catalog is the only active location for that kind's connection credentials; one previous-revision copy also contains them. SSH secrets include SSH_PASSWORD, SSH_PASSPHRASE, SSH_JUMP_PASSWORD and SSH_JUMP_PASSPHRASE. SSH private-key settings store file paths, not the key files themselves.
+
+On POSIX, new catalog files request mode `0600` and new catalog directories `0700`; existing permissions are not tightened. Windows uses inherited parent-directory ACLs (normally the user profile), not POSIX owner/group modes. Check access permissions when choosing a custom location.
+
+Keep both catalog files private: do not commit it, share it, copy it to another person or PC, paste its contents into chats/issues/AI conversations, or ask an AI agent to print it. Exclude it from cloud sync and shared backups, or protect those copies. Prefer SSH key authentication over passwords where possible. If exposed, change the affected passwords or rotate the affected keys/tokens, then update the connections through `config`.
+
+SSH blocks local uploads from and downloads into `.akms/mcp`. A custom `AKMS_MCP_HOME` outside that path is not protected as a whole: its `registry.json` and `registry.previous.json` are additionally blocked when the SSH process has that environment variable. Remote SSH paths have no catalog-specific block. WSL protects these paths through `/mnt/<drive>/`; native Linux paths have no catalog-specific block, and local Windows transfers depend on the installed SSH guard. The locked SSH 0.1.9 dependency does not block the catalog in those local transfers. Do not rely on these guards to keep the file private.
+
+Each successful catalog-changing operation atomically keeps one previous revision as **`registry.previous.json`** in the same directory. Internal application bookkeeping does not replace that pre-operation revision, and a no-op Sync leaves it unchanged. The copy requests the catalog's existing file permissions; Windows uses inherited ACLs. This is one revision, not a history.
+
+To recover, close configuration commands, preserve the current file if needed, and copy `registry.previous.json` over `registry.json` in that directory. Then reopen setup, review **Sync**, and reconnect clients. Recovery does not automatically revert client files.
+
+A running session keeps its startup snapshot. If `registry.json` is missing or invalid, a newly started session exposes only its status tool; its empty client entry cannot reconstruct credentials through Import. Restore the previous revision or enter the connections again. Individual mode still uses each entry's environment, so its existing client entries keep working and can be imported after registering services again.
+
+Each standalone package manages this versioned file directly and does not call the optional helper.
+
+Register shows existing AKMS entry counts even before registration. Applying registration automatically imports existing connections whose versions match, merging identical copies into one shared item. In session mode, it replaces owned individual entries after verifying the session launch. If a runtime is missing, the existing entries stay in place: install it from Runtime, then run Sync. Differing versions remain intact for review. Results summarize completed connections and list only items needing attention. The comparison shows changed fields, labels description-only differences, and keeps secrets hidden. Use **Import existing connections** to review differences later or import all remaining matching entries together. When versions differ, review the masked settings and choose which version to apply, or give the imported connection another name to keep both. The menu shows per-connection application counts. Failed writes keep the saved values and successful service updates; **Sync** retries pending changes and offers explicit choices for external edits. Unrelated or conflicting unmanaged entries are preserved.
+
+Codex configs are validated before and after editing. Inline/dotted server definitions
+are recognized, but automatic edits require the `[mcp_servers.<name>]` table layout;
+unsupported edits are rejected without changing the file. JSON and TOML saves use a
+temporary file so a failed write or commit preserves the previous config.
+
+On a terminal, checks in `config` and `--check` show animated progress, elapsed time and
+completed phases. After a check in `config`, **press Enter to continue**; Esc goes back and
+Ctrl+C exits. Redirected output stays plain and scripted input needs no extra answer.
+Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
 | Client | Config file | How it is written |
 |---|---|---|
 | Claude Code | `~/.claude.json` (user scope) | through `claude mcp add-json … -s user`, never by editing the file |
-| Codex | `~/.codex/config.toml` | only the `[mcp_servers.<name>]` tables are rewritten; keys you added to them stay |
+| Codex | `$CODEX_HOME/config.toml` (defaults to `~/.codex/config.toml`) | only the `[mcp_servers.<name>]` tables are rewritten; keys you added to them stay |
 | Claude Desktop | `claude_desktop_config.json` | `mcpServers.<name>` is set, every other key kept |
 | Cursor | `~/.cursor/mcp.json` | same |
 
-Only entries that launch this package are listed or touched. An edit keeps every `SSH_*` variable the wizard does not ask about (timeouts, deny patterns, `SSH_CWD`, …). **Print** shows an entry as JSON, as a Codex TOML table and as a `claude mcp add-json` line, for when pasting is easier. On Windows the entry launches through `cmd /c npx`, the form Claude Code expects for npx servers there.
+Only entries that launch this package are listed for management. An edit keeps every `SSH_*` variable the wizard does not ask about (timeouts, deny patterns, `SSH_CWD`, …). **Print** shows an entry as JSON, as a Codex TOML table and as a `claude mcp add-json` line, for when pasting is easier. Entries use the absolute Node executable and the script in the AKMS runtime directory on every platform.
 
-**Or by hand — one server entry per host** — plain `SSH_*` variables, no config file, no JSON inside JSON. Claude Code reads `.mcp.json` in the project or `~/.claude.json` globally; Claude Desktop takes the same block inside `claude_desktop_config.json`:
+**Or by hand — one server entry per host** — plain `SSH_*` variables, no separate server-side config file, no JSON inside JSON. Claude Code reads `.mcp.json` in the project or `~/.claude.json` globally; Claude Desktop takes the same block inside `claude_desktop_config.json`:
 
 ```json
 {
     "mcpServers": {
         "ssh-prod": {
-            "command": "npx",
-            "args": ["-y", "@akms/mcp-ssh"],
+            "command": "node",
+            "args": ["/absolute/akms/mcp/runtime/node_modules/@akms/mcp-ssh/lib/cli.js"],
             "env": {
                 "SSH_HOST": "10.0.0.5", "SSH_USER": "deploy", "SSH_KEY": "~/.ssh/id_ed25519",
                 "SSH_READONLY": "true", "SSH_ALLOWED_PATHS": "/var/log,/opt/app"
@@ -82,7 +158,7 @@ Only entries that launch this package are listed or touched. An edit keeps every
 }
 ```
 
-`SSH_HOST` + `SSH_USER` is the whole minimum, and the **private key stays a file on disk** — only its path goes in the config. Because each server fronts one host, the agent never names it: `ssh_exec({ command: "df -h" })` is a complete call. The server name (`ssh-prod`) is what the agent sees in its tool list, so name it after the host.
+`SSH_HOST` + `SSH_USER` is sufficient only when an SSH agent with an authorized key is available; otherwise also provide a key path or password as shown in [Minimum working configuration](#minimum-working-configuration). The **private key stays a file on disk** — only its path goes in the config. Because each server fronts one host, the agent never names it: `ssh_exec({ command: "df -h" })` is a complete call. The server name (`ssh-prod`) is what the agent sees in its tool list, so name it after the host.
 
 The server speaks MCP over **stdio**: stdout carries the JSON-RPC stream and all logging goes to stderr. Running it by hand in a terminal only prints the startup line and waits. When the client goes away — stdin ends, or the process is simply gone — the server closes its sessions and exits within a few seconds on its own; a stderr nobody reads is never a reason to stay. Its log says `mcp server ready on stdio` with its `pid`, for when one has to be found among a client's processes.
 
@@ -120,12 +196,16 @@ Authentication is tried in this order: **private key by path** (with `SSH_PASSPH
 `~/.ssh/config` is **not** read — the server never shells out to `ssh` — so a `ProxyJump` or `ProxyCommand` that works on the command line has to be stated in the entry. Both OpenSSH shapes are available, and they compose:
 
 ```json
-"ssh-dev": {
-    "command": "npx", "args": ["-y", "@akms/mcp-ssh"],
-    "env": {
-        "SSH_HOST": "10.0.16.12", "SSH_USER": "ubuntu", "SSH_KEY": "~/.ssh/id_ed25519",
-        "SSH_JUMP_HOST": "dev-ak-ssh.example.com",
-        "SSH_PROXY_COMMAND": "cloudflared access ssh --hostname %h"
+{
+    "mcpServers": {
+        "ssh-dev": {
+            "command": "node", "args": ["/absolute/akms/mcp/runtime/node_modules/@akms/mcp-ssh/lib/cli.js"],
+            "env": {
+                "SSH_HOST": "10.0.16.12", "SSH_USER": "ubuntu", "SSH_KEY": "~/.ssh/id_ed25519",
+                "SSH_JUMP_HOST": "dev-ak-ssh.example.com",
+                "SSH_PROXY_COMMAND": "cloudflared access ssh --hostname %h"
+            }
+        }
     }
 }
 ```
@@ -174,11 +254,11 @@ Add a server entry per host. Each one carries its own connection and its own pol
 {
     "mcpServers": {
         "ssh-prod": {
-            "command": "npx", "args": ["-y", "@akms/mcp-ssh"],
+            "command": "node", "args": ["/absolute/akms/mcp/runtime/node_modules/@akms/mcp-ssh/lib/cli.js"],
             "env": { "SSH_HOST": "10.0.0.5", "SSH_USER": "deploy", "SSH_READONLY": "true" }
         },
         "ssh-dev": {
-            "command": "npx", "args": ["-y", "@akms/mcp-ssh"],
+            "command": "node", "args": ["/absolute/akms/mcp/runtime/node_modules/@akms/mcp-ssh/lib/cli.js"],
             "env": { "SSH_HOST": "192.168.0.10", "SSH_USER": "ubuntu" }
         }
     }
@@ -188,7 +268,7 @@ Add a server entry per host. Each one carries its own connection and its own pol
 ### Check it before wiring it up
 
 ```bash
-akms-mcp-ssh --check          # or: npx -y @akms/mcp-ssh --check
+akms-mcp-ssh --check
 ```
 
 Connects to the configured host and reports what happened — exit code 0 when it is reachable. Otherwise a setup mistake is indistinguishable from a policy rejection when the agent tries something. Warnings still print during the check (a missing key file, the proxy command's stderr); add `SSH_MCP_LOG_LEVEL=debug` to see the handshake.
@@ -258,6 +338,14 @@ Rules are enforced inside `SshConnection.exec` and the SFTP operations — the l
 ### Local path protection
 
 The file tools run with this server's own privileges on your machine, so `localPath` is guarded in both directions — but narrowly, covering **credentials** (`~/.ssh`, `authorized_keys`, private keys, `.pem`/`.key`, `~/.aws`, `~/.gnupg`, `~/.kube`, `~/.docker`, `.npmrc`, `.netrc`) and **files that define the guards** (`.claude*` / `.mcp.json` / `claude_desktop_config.json` — where this server's `SSH_*` variables live — plus autostart locations). `.env` uploads, `.bashrc` backups and cron fetches are normal deployment work and are allowed. Symlinks are resolved before matching, so a link into `~/.ssh` does not slip past.
+
+## Memory and process lifetime
+
+SSH and its crypto runtime load on the first connection instead of during idle MCP startup or local configuration work. The same loaded client supports direct, proxy and jump-host routes. Concurrent callers share the connection attempt, and disconnecting during module loading prevents a later transport from opening. The runtime stays loaded after first use; disconnecting a session closes its transport rather than unloading the module.
+
+Individual mode starts one server process per configured connection in each client session. Session mode combines that kind's connections in one stdio process per client session. Both use the dedicated runtime directly, avoiding a resident npm/npx wrapper. Convert from Runtime and reconnect clients to load the new layout. Connections to remote services remain lazy.
+
+Restart MCP connections after updating to apply the new code. Compare process counts and Windows Private Bytes separately from resident memory (RSS), including npm wrappers in the total.
 
 ## 📄 Logging
 
