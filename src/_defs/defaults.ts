@@ -34,4 +34,4 @@ export const SERVER_NAME = "akms-mcp-ssh";
 /** Package identity used to recognize existing MCP entries. */
 export const PACKAGE_NAME = "@akms/mcp-ssh";
 
-export const SERVER_VERSION = "0.2.1";
+export const SERVER_VERSION = "0.3.0";
