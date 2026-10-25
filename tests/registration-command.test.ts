@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { removeTempDirectory } from "./support/remove-temp-directory";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -10,7 +11,10 @@ import { createJsonFileTarget } from "../src/modules/manage/targets/json-file";
 
 let directory: string;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), "akms-ssh-standalone-")); vi.stubEnv("AKMS_MCP_HOME", directory); });
-afterEach(() => { vi.unstubAllEnvs(); fs.rmSync(directory, { recursive: true, force: true }); });
+afterEach(async () => {
+    vi.unstubAllEnvs();
+    await removeTempDirectory(directory, "akms-ssh-standalone-");
+}, 15_000);
 function fixture({ legacy = true } = {}) {
     if(legacy) fs.writeFileSync(path.join(directory, "registry.json"), JSON.stringify({ version: 1, clients: [], connections: {} }));
     const targets = ["cursor", "claude-desktop"].map((id) => createJsonFileTarget({ id: id as "cursor" | "claude-desktop", label: id, filePath: path.join(directory, id + ".json") }));

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { removeTempDirectory } from "./support/remove-temp-directory";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -12,7 +13,11 @@ import type { ConfigTarget, McpKind, McpServerEntry } from "../src/modules/regis
 
 let directory: string;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), "akms-session-")); vi.stubEnv("AKMS_MCP_HOME", path.join(directory, "catalog")); });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); if(path.dirname(path.resolve(directory)) !== path.resolve(os.tmpdir()) || !path.basename(directory).startsWith("akms-session-")) throw new Error("Unexpected cleanup target"); fs.rmSync(directory, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
+afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    await removeTempDirectory(directory, "akms-session-");
+}, 15_000);
 const entry = (kind: McpKind = "db", password = "private-original"): McpServerEntry => ({ command: "npx", args: ["-y", `@akms/mcp-${kind}`], env: { [`${kind.toUpperCase()}_PASSWORD`]: password, [`${kind.toUpperCase()}_DESCRIPTION`]: "fixture description" } });
 function fixture({ legacy = true, populate = true } = {}) {
     const targets: ConfigTarget[] = ["cursor", "codex"].map(id => {

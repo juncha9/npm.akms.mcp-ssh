@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { removeTempDirectory } from "./support/remove-temp-directory";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -9,7 +10,9 @@ import type { McpServerEntry } from "../src/modules/registration/types";
 
 let directory: string;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), "akms startup ")); });
-afterEach(() => { fs.rmSync(directory, { recursive: true, force: true }); });
+afterEach(async () => {
+    await removeTempDirectory(directory, "akms startup ");
+}, 15_000);
 function fixture(mode = "ok"): McpServerEntry {
     const file = path.join(directory, "fixture server.cjs");
     fs.writeFileSync(file, `

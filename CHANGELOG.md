@@ -2,6 +2,13 @@
 
 All notable changes to `@akms/mcp-ssh`. Dates are `YYYY-MM-DD`.
 
+## [0.3.1] - 2026-10-26
+
+### Verification
+
+- Stabilize Windows test cleanup: temporary test directories are removed with one bounded asynchronous retry budget for transient file locks, while persistent errors still fail. Tests only; the published package changes only its version.
+- 0.3.0 was committed but never published to npm; 0.3.1 is the first published 0.3 release.
+
 ## [0.3.0] - 2026-10-26
 
 - Detect older registry formats in standalone config and the helper menu. Add reviewed, ordered migrations with default-No approval, script APIs, complete pre-migration backup, rollback preservation and post-apply startup checks. Runtime can change the default for future kinds without changing existing modes.

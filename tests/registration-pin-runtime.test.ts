@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { removeTempDirectory } from "./support/remove-temp-directory";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -14,7 +15,10 @@ vi.mock("../src/modules/manage/connection-check", async (original) => ({
 }));
 let directory: string;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), "akms-pin-runtime-")); vi.stubEnv("AKMS_MCP_HOME", directory); fs.writeFileSync(path.join(directory, "registry.json"), JSON.stringify({ version: 1, clients: [], connections: {} })); });
-afterEach(() => { vi.unstubAllEnvs(); fs.rmSync(directory, { recursive: true, force: true }); });
+afterEach(async () => {
+    vi.unstubAllEnvs();
+    await removeTempDirectory(directory, "akms-pin-runtime-");
+}, 15_000);
 
 describe("runtime preparation before pinning", () => {
     it.each([[true, false], [false, false], [false, true]])("handles pinning with installation success=%s and custom launch=%s", async (success, custom) => {

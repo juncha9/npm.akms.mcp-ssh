@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { removeTempDirectory } from "./support/remove-temp-directory";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -13,7 +14,11 @@ beforeEach(() => {
     directory = fs.mkdtempSync(path.join(os.tmpdir(), "akms-catalog-security-"));
     vi.stubEnv("AKMS_MCP_HOME", path.join(directory, "catalog"));
 });
-afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); fs.rmSync(directory, { recursive: true, force: true }); });
+afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    await removeTempDirectory(directory, "akms-catalog-security-");
+}, 15_000);
 
 function fixture({ legacy = true } = {}) {
     if(legacy) {

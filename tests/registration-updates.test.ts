@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { removeTempDirectory } from "./support/remove-temp-directory";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -11,7 +12,11 @@ import type { McpKind } from "../src/modules/registration/types";
 
 let directory: string;
 beforeEach(() => { directory = fs.mkdtempSync(path.join(os.tmpdir(), "akms updates ")); vi.stubEnv("AKMS_MCP_HOME", directory); fs.writeFileSync(path.join(directory, "registry.json"), JSON.stringify({ version: 1, clients: [], connections: {} })); });
-afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); fs.rmSync(directory, { recursive: true, force: true }); });
+afterEach(async () => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    await removeTempDirectory(directory, "akms updates ");
+}, 15_000);
 async function screen(lines: string[], registry: Registry) {
     const input = new PassThrough(), output = new PassThrough(); let text = "";
     output.on("data", chunk => { text += chunk; }); input.end(lines.join("\n") + "\n");
