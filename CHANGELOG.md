@@ -2,6 +2,16 @@
 
 All notable changes to `@akms/mcp-ssh`. Dates are `YYYY-MM-DD`.
 
+## [0.3.2] - 2026-10-26
+
+### Changed
+
+- Point Sync review instructions to its current menu and name the services retaining old connection entries, grouping only identical retained lists.
+- Separate runtime waits from failed changes in Register and Sync. Group retained connection names, count saved connections separately from service entries, and show semantic colors only on interactive terminals without NO_COLOR.
+- Offer unimported connections directly from Sync and compare both saved and external settings before resolving an individual entry during session migration. Wide terminals show versions side by side; narrow terminals keep wrapped values.
+- Preserve existing terminal symbols and keep status words visible when colors are disabled.
+- Document the upgrade path from 0.2.x, including pending runtimes, differing imported settings, reconnecting clients, rollback and registry migration.
+
 ## [0.3.1] - 2026-10-26
 
 ### Verification

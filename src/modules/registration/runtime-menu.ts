@@ -1,4 +1,4 @@
-import { Registry, formatResults, sessionName } from "./registry";
+import { Registry, sessionName } from "./registry";
 import { CLIENT_LABELS } from "./types";
 import { packageName, runtimeInstallCommand, runtimeIsOlder, runtimePrefix } from "./runtime";
 import { plainText, writeWrapped } from "./comparison";
@@ -66,7 +66,7 @@ export async function runtimeMenu(prompter: Prompter, registry: Registry, reques
                 const mode = registry.read().defaultMode === "catalog" ? "individual" : "catalog";
                 prompter.write(`New kinds will use ${mode === "catalog" ? "session servers" : "individual entries"}. Existing kinds keep their settings.\n`);
                 if(await prompter.askYesNo("Change the default for new kinds?", false)) {
-                    prompter.write(`${formatResults(registry.setDefaultMode(mode), "Default for new kinds saved.")}\n`);
+                    prompter.write(`${registry.formatResults(registry.setDefaultMode(mode), "Default for new kinds saved.", prompter.paint)}\n`);
                     await prompter.acknowledge();
                 }
                 continue;
@@ -94,7 +94,7 @@ export async function runtimeMenu(prompter: Prompter, registry: Registry, reques
                 if(!await prompter.askYesNo("Apply this configuration mode?", false)) continue;
                 const results = registry.applySession(plan);
                 prompter.clearScreen();
-                prompter.write(`${formatResults(results, "Configuration mode saved.")}\n`);
+                prompter.write(`${registry.formatResults(results, "Configuration mode saved.", prompter.paint)}\n`);
                 await registry.checkSaved(prompter, plan.names);
                 prompter.write("Restart or reconnect your AI clients to load the new server layout. Fix startup failures first.\n");
                 await prompter.acknowledge();
@@ -126,7 +126,7 @@ export async function runtimeMenu(prompter: Prompter, registry: Registry, reques
             if(!await prompter.askYesNo("Apply these launch commands to registered services?", true)) continue;
             const results = registry.applyRuntime(plan);
             prompter.clearScreen();
-            prompter.write(`${formatResults(results, "Runtime settings saved.")}\n\nRestart or reconnect AI clients to replace running npx processes.\n`);
+            prompter.write(`${registry.formatResults(results, "Runtime settings saved.", prompter.paint)}\n\nRestart or reconnect AI clients to replace running npx processes.\n`);
             await registry.checkSaved(prompter, plan.names);
             await prompter.acknowledge();
         } catch(error) {

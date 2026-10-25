@@ -1,4 +1,4 @@
-import { Registry, formatResults, sessionName } from "./registry";
+import { Registry, sessionName } from "./registry";
 import { CLIENT_LABELS } from "./types";
 import { plainText, writeWrapped } from "./comparison";
 import { Prompter, PromptBackError, PromptClosedError } from "./prompter";
@@ -34,7 +34,7 @@ export async function migrationMenu(prompter: Prompter, registry: Registry): Pro
         if(!await prompter.askYesNo("Migrate registry and apply these changes?", false)) return;
         const results = registry.applyMigration(plan);
         prompter.clearScreen();
-        prompter.write(`${formatResults(results, "Registry migration saved.")}\n`);
+        prompter.write(`${registry.formatResults(results, "Registry migration saved.", prompter.paint)}\n`);
         await registry.checkSaved(prompter, plan.kinds.filter(item => item.status !== "individual").flatMap(item => item.names));
         prompter.write("Reconnect affected clients after changes to their server layout. Fix startup failures first.\n");
         await prompter.acknowledge();

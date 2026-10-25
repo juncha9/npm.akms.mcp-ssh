@@ -167,10 +167,10 @@ export async function checkConnections(prompter: Prompter, entries: { name: stri
         const missing = prefixes?.filter(prefix => !covered.has(prefix)) ?? [];
         if(result.ok && missing.length) result = { ...result, ok: false, detail: `Missing connection tools: ${missing.map(prefix => prefix.slice(0, -2)).join(", ")}. Review catalog status before reconnecting.` };
         const safe = (value: string) => [entry, ...maskEntries ?? []].reduce((text, source) => redactStartupText(text, source), value);
-        writeWrapped(prompter, safe(result.ok ? `OK ${name}: ${result.server}@${result.version}, ${result.tools} tools` : `FAILED ${name}: exit ${result.exitCode ?? "unavailable"}. ${result.detail ?? "Server failed to start."}`));
+        writeWrapped(prompter, safe(result.ok ? `OK ${name}: ${result.server}@${result.version}, ${result.tools} tools` : `FAILED ${name}: exit ${result.exitCode ?? "unavailable"}. ${result.detail ?? "Server failed to start."}`), "", undefined, result.ok ? prompter.paint.success : prompter.paint.error);
         if(!result.ok) {
             failed = true;
-            for(const line of result.stderr) writeWrapped(prompter, safe(line), "  ");
+            for(const line of result.stderr) writeWrapped(prompter, safe(line), "  ", undefined, prompter.paint.dim);
         }
     }
     if(failed) prompter.write("Settings remain saved. Fix failed startup checks before restarting or reconnecting your AI clients.\n");

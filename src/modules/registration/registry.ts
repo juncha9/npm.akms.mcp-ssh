@@ -50,6 +50,10 @@ export interface SyncResult {
     name: string;
     status: "synced" | "removed" | "pending" | "conflict" | "error";
     detail: string;
+    kind?: McpKind;
+    /** Logical connections represented by this service entry, including a bundle. */
+    connections?: string[];
+    waitingFor?: "runtime" | "session" | "connections" | "rename";
 }
 export interface ImportCandidate { client: ClientId; name: string; kind: McpKind; entry: McpServerEntry }
 export interface RegistrationPlan {
@@ -471,12 +475,19 @@ export class Registry {
     sync(): SyncResult[] { return this.change(() => {}); }
     inspect(): SyncResult[] { return this.reconcile(this.read(), false); }
 
+    formatResults(results: SyncResult[], prefix = "", paint?: ResultPaint, reviewHint?: string): string {
+        return formatResults(results, prefix, { paint, reviewHint,
+            connectionCount: Object.values(this.read().connections).filter(item => item.entry).length });
+    }
+
     private reconcile(state: RegistryState, apply: boolean, kinds?: McpKind[]): SyncResult[] {
         const results: SyncResult[] = [];
         // New names must be installed before old names can be removed on that client.
         const active = (kind: McpKind) => Object.entries(state.connections).filter(([, item]) => item.kind === kind && item.entry);
         for(const kind of kinds ?? KINDS) if(this.isSessionMode(kind, state) && active(kind).length && !state.sessions?.[kind]) {
-            for(const client of state.clients) results.push({ client, name: sessionName(kind), status: "pending", detail: "Install this kind's runtime from Runtime, then run Sync. Existing client entries are kept." });
+            for(const client of state.clients) results.push({ client, name: sessionName(kind), kind,
+                connections: active(kind).map(([name]) => name), status: "pending", waitingFor: "runtime",
+                detail: "Install it from Runtime, then run Sync. Your existing entries keep working." });
         }
         const work = [
             ...Object.entries(state.connections).filter(([, connection]) => !kinds || kinds.includes(connection.kind)).map(([name, connection]) => ({ name, connection, bundle: false })),
@@ -494,7 +505,8 @@ export class Registry {
                 const previous = connection.applied[client];
                 if(!desired && !previous) continue;
                 const target = this.targets.find((candidate) => candidate.id === client);
-                const report = (status: SyncResult["status"], detail: string) => results.push({ client, name, status, detail });
+                const report = (status: SyncResult["status"], detail: string, waitingFor?: SyncResult["waitingFor"]) => results.push({ client, name, status, detail,
+                    kind: connection.kind, connections: bundle ? active(connection.kind).map(([name]) => name) : [name], ...(waitingFor ? { waitingFor } : {}) });
                 if(!target) { report("error", "Service adapter unavailable; use a newer package to retry."); continue; }
                 try {
                     const entries = target.readEntries();
@@ -514,20 +526,17 @@ export class Registry {
                             : actual ? "Changed outside AKMS; review before removing this entry."
                             : "This name is used by another server type; choose another name.");
                     }
-                    else if(!apply) {
-                        report("pending", desired ? "Needs applying" : "Needs removal");
-                    }
                     else {
                         if(!desired && state.clients.includes(client)) {
                             if(!bundle && this.isSessionMode(connection.kind, state) && active(connection.kind).length) {
                                 const session = state.sessions?.[connection.kind];
                                 const replacement = entries[sessionName(connection.kind)];
                                 if(!session || !replacement || entryHash(replacement) !== entryHash(session.entry) || session.applied[client] !== entryHash(session.entry)) {
-                                    report("pending", "Connection entry kept until the session server is applied."); continue;
+                                    report("pending", "Connection entry kept until the session server is applied.", "session"); continue;
                                 }
                             }
                             if(bundle && !this.isSessionMode(connection.kind, state) && active(connection.kind).some(([connectionName, value]) => !entries[connectionName] || entryHash(entries[connectionName]) !== entryHash(value.entry!))) {
-                                report("pending", "Session entry kept until all connection entries are applied."); continue;
+                                report("pending", "Session entry kept until all connection entries are applied.", "connections"); continue;
                             }
                         }
                         let replacement = connection.replacement && state.connections[connection.replacement];
@@ -538,9 +547,10 @@ export class Registry {
                         }
                         if(!desired && state.clients.includes(client) && !this.isSessionMode(connection.kind, state) && replacement && replacement.entry
                             && replacement.applied[client] !== entryHash(replacement.entry)) {
-                            report("pending", "Old name kept until the new name is applied.");
+                            report("pending", "Old name kept until the new name is applied.", "rename");
                             continue;
                         }
+                        if(!apply) { report("pending", desired ? "Needs applying" : "Needs removal"); continue; }
                         const result = desired ? target.writeEntry(name, desired) : target.removeEntry(name);
                         if(result.status !== "written") { report("error", "Could not write this service's settings. Check its CLI, syntax and permissions."); continue; }
                         // Read back, so success means the requested entry really reached disk.
@@ -625,7 +635,7 @@ export class Registry {
         const registry = this;
         let snapshot: Record<string, McpServerEntry> | undefined;
         const expected = (name: string) => snapshot ? (own(snapshot, name) ? entryHash(snapshot[name]) : null) : undefined;
-        const saved = (results: SyncResult[]): ConfigWriteResult => ({ status: "written", detail: formatResults(results, "Saved in the shared AKMS catalog.") });
+        const saved = (results: SyncResult[]): ConfigWriteResult => ({ status: "written", detail: registry.formatResults(results, "Saved in the shared AKMS catalog.") });
         const prepare = (name: string, entry: McpServerEntry, oldName?: string): McpServerEntry => {
             if(!registry.read().clients.length) throw new RegistryError("Register at least one AI service before saving a connection.");
             const prior = snapshot && own(snapshot, oldName ?? name) ? snapshot[oldName ?? name] : undefined;
@@ -651,28 +661,56 @@ export class Registry {
     }
 }
 
-export function formatResults(results: SyncResult[], prefix = ""): string {
-    const lines = prefix ? [prefix] : [];
-    if(!results.length) return [...lines, "  No shared connections need applying."].join("\n");
-    const attention = results.filter((item) => !["synced", "removed"].includes(item.status));
-    const total = new Set(results.map((item) => item.name)).size;
-    const unresolved = new Set(attention.map((item) => item.name)).size;
-    lines.push(`  Connections: ${total - unresolved} complete · ${unresolved} need attention`);
+type ResultPaint = Pick<Prompter["paint"], "success" | "warning" | "error" | "dim" | "bold">;
+
+export function formatResults(results: SyncResult[], prefix = "", options: { connectionCount?: number; paint?: ResultPaint; reviewHint?: string } = {}): string {
+    const plain = (text: string) => text;
+    const paint = options.paint ?? { success: plain, warning: plain, error: plain, dim: plain, bold: plain };
+    const safe = (text: string) => text.replace(/[\x00-\x1f\x7f]/g, " ");
+    const lines = prefix ? [paint.bold(prefix)] : [];
+    const total = options.connectionCount ?? new Set(results.flatMap(item => item.connections ?? [item.name])).size;
+    lines.push(`  Connections: ${total}`);
     const updated = results.filter((item) => item.status === "synced" && item.detail === "Applied").length;
     const unchanged = results.filter((item) => item.status === "synced" && item.detail !== "Applied").length;
     const removed = results.filter((item) => item.status === "removed").length;
-    lines.push(`  Service entries: ${updated} updated · ${unchanged} already up to date${removed ? ` · ${removed} removed` : ""}`);
-    for(const [heading, rows] of [
-        ["Needs review (existing settings kept)", attention.filter((item) => item.status === "conflict")],
-        ["Could not finish", attention.filter((item) => item.status !== "conflict")],
-    ] as const) {
-        if(!rows.length) continue;
-        lines.push(`\n${heading}:`);
-        for(const name of new Set(rows.map((item) => item.name))) {
-            lines.push(`  ${name.replace(/[\x00-\x1f\x7f]/g, " ")}`);
-            for(const row of rows.filter((item) => item.name === name)) lines.push(`    ${CLIENT_LABELS[row.client]}: ${row.detail}`);
+    const failed = results.filter(item => item.status === "error");
+    lines.push(`  Service entries: ${paint.success(`${updated} updated · ${unchanged} already up to date`)}${removed ? ` · ${paint.success(`${removed} removed`)}` : ""} · ${(failed.length ? paint.error : paint.dim)(`${failed.length} failed`)}`);
+    if(!results.length) lines.push(paint.dim("  No shared connections need applying."));
+    if(results.length && results.every(item => item.status === "synced" || item.status === "removed")) lines.push(paint.success("  OK: all service entries are up to date."));
+    const waiting = results.filter(item => item.status === "pending");
+    for(const kind of KINDS) {
+        const runtime = waiting.filter(item => item.kind === kind && item.waitingFor === "runtime");
+        const kept = waiting.filter(item => item.kind === kind && item.waitingFor === "session");
+        if(!runtime.length && !kept.length) continue;
+        lines.push(`\n${paint.warning(runtime.length ? `Waiting for runtime - ${kind.toUpperCase()}` : `Waiting for ${sessionName(kind)}`)}`);
+        if(runtime.length) lines.push("  Install it from Runtime, then run Sync. Your existing entries keep working.");
+        else lines.push("  Resolve this session entry in Sync. Existing connection entries stay until it is ready.");
+        const retained = new Map<string, { clients: ClientId[]; names: string[] }>();
+        for(const client of new Set(kept.map(item => item.client))) {
+            const names = [...new Set(kept.filter(item => item.client === client).map(item => item.name))];
+            const key = JSON.stringify([...names].sort());
+            const group = retained.get(key);
+            if(group) group.clients.push(client);
+            else retained.set(key, { clients: [client], names });
+        }
+        for(const group of retained.values()) {
+            const clients = group.clients.map(client => CLIENT_LABELS[client]).join(" · ");
+            lines.push(paint.dim(`  Kept in ${clients} until ${sessionName(kind)} is applied: ${group.names.map(safe).join(", ")}`));
         }
     }
-    if(attention.length) lines.push("\nNext: open Sync to compare settings or retry unfinished changes.");
+    for(const [heading, rows, color] of [
+        ["Needs review (existing settings kept)", results.filter(item => item.status === "conflict"), paint.warning],
+        ["Waiting for Sync", waiting.filter(item => !item.waitingFor || !["runtime", "session"].includes(item.waitingFor)), paint.warning],
+        ["Could not finish", failed, paint.error],
+    ] as const) {
+        if(!rows.length) continue;
+        lines.push(`\n${color(`${heading}:`)}`);
+        for(const name of new Set(rows.map((item) => item.name))) {
+            lines.push(`  ${safe(name)}`);
+            for(const row of rows.filter((item) => item.name === name)) lines.push(`    ${row.status === "error" ? paint.error("FAILED ") : ""}${CLIENT_LABELS[row.client]}: ${safe(row.detail)}`);
+        }
+    }
+    if(results.some(item => item.status === "conflict")) lines.push(paint.warning(`\n${options.reviewHint ?? "Next: open Sync to compare settings and choose which version to use."}`));
+    if(failed.length) lines.push(paint.error("\nNext: fix the errors above, then run Sync again."));
     return lines.join("\n");
 }

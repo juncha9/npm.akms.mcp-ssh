@@ -202,6 +202,8 @@ export function supportsUnicode(): boolean {
 interface Style {
     accent(text: string): string;
     success(text: string): string;
+    warning(text: string): string;
+    error(text: string): string;
     dim(text: string): string;
     bold(text: string): string;
 }
@@ -219,6 +221,8 @@ function createStyle(enabled: boolean): Style {
     return {
         accent: paint(36, 39),
         success: paint(32, 39),
+        warning: paint(33, 39),
+        error: paint(31, 39),
         dim: paint(2, 22),
         bold: paint(1, 22),
     };

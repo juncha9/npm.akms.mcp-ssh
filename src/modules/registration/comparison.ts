@@ -19,7 +19,7 @@ const fieldName = (field: string): string => {
 };
 
 /** Wrap complete values, including Korean text, without clipping the differing suffix. */
-export function writeWrapped(prompter: Prompter, text: string, indent = "", changed?: [number, number]): void {
+export function writeWrapped(prompter: Prompter, text: string, indent = "", changed?: [number, number], style?: (text: string) => string): void {
     const characters = Array.from(plainText(text));
     let line = indent;
     let width = displayWidth(indent);
@@ -30,7 +30,7 @@ export function writeWrapped(prompter: Prompter, text: string, indent = "", chan
         const character = characters[index];
         const size = displayWidth(character);
         if(width + size > prompter.width) {
-            flush(); prompter.write(line + "\n"); line = indent; width = displayWidth(indent);
+            flush(); prompter.write((style ? style(line) : line) + "\n"); line = indent; width = displayWidth(indent);
         }
         const highlight = !!changed && index >= changed[0] && index < changed[1];
         if(highlight !== highlighted) { flush(); highlighted = highlight; }
@@ -38,7 +38,7 @@ export function writeWrapped(prompter: Prompter, text: string, indent = "", chan
         width += size;
     }
     flush();
-    prompter.write(line + "\n");
+    prompter.write((style ? style(line) : line) + "\n");
 }
 
 /** Mark only the changed middle; compare masked values, never secrets. */
@@ -62,6 +62,34 @@ export function compareEntries(prompter: Prompter, versions: { label: string; en
             ? (Object.hasOwn(entry.env, key) ? plainText(entry.env[key]) || "(empty)" : "(not set)")
             : "(hidden)");
     });
+    if(versions.length === 2 && prompter.width >= 90) {
+        const width = Math.floor((prompter.width - 3) / 2);
+        const wrap = (value: string, changed?: [number, number]) => {
+            const lines: { text: string; width: number }[] = [{ text: "", width: 0 }];
+            for(const [index, character] of Array.from(value).entries()) {
+                const size = displayWidth(character);
+                if(lines[lines.length - 1].width + size > width) lines.push({ text: "", width: 0 });
+                const line = lines[lines.length - 1];
+                line.text += changed && index >= changed[0] && index < changed[1] ? prompter.paint.accent(prompter.paint.bold(character)) : character;
+                line.width += size;
+            }
+            return lines;
+        };
+        const row = (left: ReturnType<typeof wrap>, right: ReturnType<typeof wrap>) => {
+            for(let line = 0; line < Math.max(left.length, right.length); line++) {
+                prompter.write(`${left[line]?.text ?? ""}${" ".repeat(width - (left[line]?.width ?? 0))} | ${right[line]?.text ?? ""}\n`);
+            }
+        };
+        prompter.write("\n");
+        row(wrap(`[1] ${plainText(versions[0].label)}`), wrap(`[2] ${plainText(versions[1].label)}`));
+        for(let field = 0; field < fields.length; field++) {
+            prompter.write(`\n${prompter.paint.dim(fieldName(fields[field]))}\n`);
+            row(wrap(values[field][0], changedRange(values[field], 0)), wrap(values[field][1], changedRange(values[field], 1)));
+        }
+        if(values.some(row => row.includes("(hidden)"))) prompter.write(prompter.paint.dim("\nSecret values are hidden.\n"));
+        prompter.write("\n");
+        return;
+    }
     for(let index = 0; index < versions.length; index++) {
         prompter.write("\n");
         writeWrapped(prompter, `[${index + 1}] ${versions[index].label}`);

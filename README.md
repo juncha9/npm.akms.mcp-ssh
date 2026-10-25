@@ -18,6 +18,14 @@ akms-mcp-ssh --help
 akms-mcp-ssh --version        # show the installed version
 ```
 
+## Upgrading from 0.2.x
+
+Open the current setup with `npx -y --prefer-online @akms/mcp@latest`, install this runtime from **Runtime**, then use **Register > Apply registration** to import existing entries. Compare differing descriptions when prompted, or use **Import existing connections** later.
+
+If you register before installing the runtime, existing entries are kept in a normal pending state. Install the runtime, run **Sync**, then restart or reconnect your client and check `ssh_catalog_status`.
+
+See the launcher's [full upgrade guide](https://github.com/juncha9/npm.akms.mcp/blob/main/README.md#upgrading-from-02x) for the comparison steps, Codex thread cleanup, rollback and **Migrate registry** for older development catalogs.
+
 ## Minimum working configuration
 
 Install the server from **Runtime** before using these manual examples. On Windows its script is `<AKMS_MCP_HOME or ~/.akms/mcp>/runtime/node_modules/@akms/mcp-ssh/lib/cli.js`; on macOS/Linux insert `lib/` before `node_modules`. Replace the placeholder below with that absolute path. Use the Node executable from `node -p "process.execPath"` as `command`. The `config` command writes both paths for you.
@@ -62,7 +70,7 @@ Managed connections start Node directly using a dedicated installation at `<AKMS
 
 Before Add or a standard-launch Edit, setup installs a missing runtime with `npm install --global --prefix "<AKMS runtime directory>" --prefer-online --no-fund --no-audit @akms/mcp-ssh@latest`. If the installed version is older than this setup package, it offers an update (default Yes); declining continues with the installed version. Linked development packages skip this prompt. Host-key saves for standard launches also check the runtime before writing. Custom launch commands keep their existing command and require no managed-runtime installation. If an update fails but an installed runtime is still usable, setup reports the error and continues with that version. Servers do not invoke npm or query updates when AI clients connect.
 
-To migrate existing entries, open `akms-mcp-ssh config`, choose **Runtime**, install the runtime if needed, then choose **Use for existing connections**. Both legacy npx entries and direct paths in ordinary global installations can be converted. Review and apply the list, then **restart or reconnect the AI clients** to replace running processes. Connection values and credentials stay intact; custom commands and external client edits are preserved for individual review. Register/import legacy entries first if they are missing from the shared list. Version-pinned npx entries switch to the installed version shown in the preview.
+For an existing catalog that still uses individual entries, open `akms-mcp-ssh config`, choose **Runtime**, install the runtime if needed, then choose **Use for existing connections**. Both legacy npx entries and direct paths in ordinary global installations can be converted. Review and apply the list, then **restart or reconnect the AI clients** to replace running processes. Connection values and credentials stay intact; custom commands and external client edits are preserved for individual review. Register/import legacy entries first if they are missing from the shared list. Version-pinned npx entries switch to the installed version shown in the preview.
 
 **Runtime > Update runtime installation** explicitly installs the latest release into this same directory. The Node executable keeps its existing alias path, allowing nvm-windows to switch Node versions while the package path stays fixed. If the Node command path or `AKMS_MCP_HOME` moves, reapply current paths from Runtime. Removing the runtime directory breaks entries that use it.
 
